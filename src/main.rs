@@ -2341,20 +2341,26 @@ mod map_counter {
     use std::collections::{BTreeMap, HashMap};
     use std::hash::Hash;
     pub trait MapCounter<T> {
-        fn incr(&mut self, key: T);
+        fn incr(&mut self, key: T) -> bool;
         fn incr_by(&mut self, key: T, delta: usize);
-        fn decr(&mut self, key: &T);
+        fn decr(&mut self, key: &T) -> bool;
         fn decr_by(&mut self, key: &T, delta: usize);
     }
     impl<T: Ord + Clone> MapCounter<T> for BTreeMap<T, usize> {
-        fn incr(&mut self, key: T) {
-            self.incr_by(key, 1);
+        fn incr(&mut self, key: T) -> bool {
+            let stat0 = self.contains_key(&key);
+            self.incr_by(key.clone(), 1);
+            let stat1 = self.contains_key(&key);
+            stat0 != stat1
         }
         fn incr_by(&mut self, key: T, delta: usize) {
             *self.entry(key).or_insert(0) += delta;
         }
-        fn decr(&mut self, key: &T) {
+        fn decr(&mut self, key: &T) -> bool {
+            let stat0 = self.contains_key(&key);
             self.decr_by(key, 1);
+            let stat1 = self.contains_key(&key);
+            stat0 != stat1
         }
         fn decr_by(&mut self, key: &T, delta: usize) {
             let v = self.entry(key.clone()).or_insert(0);
@@ -2366,14 +2372,20 @@ mod map_counter {
         }
     }
     impl<T: Clone + Hash + Eq> MapCounter<T> for HashMap<T, usize> {
-        fn incr(&mut self, key: T) {
-            self.incr_by(key, 1);
+        fn incr(&mut self, key: T) -> bool {
+            let stat0 = self.contains_key(&key);
+            self.incr_by(key.clone(), 1);
+            let stat1 = self.contains_key(&key);
+            stat0 != stat1
         }
         fn incr_by(&mut self, key: T, delta: usize) {
             *self.entry(key).or_insert(0) += delta;
         }
-        fn decr(&mut self, key: &T) {
+        fn decr(&mut self, key: &T) -> bool {
+            let stat0 = self.contains_key(&key);
             self.decr_by(key, 1);
+            let stat1 = self.contains_key(&key);
+            stat0 != stat1
         }
         fn decr_by(&mut self, key: &T, delta: usize) {
             let v = self.entry(key.clone()).or_insert(0);
@@ -6173,8 +6185,83 @@ mod solver {
                 }
                 dict
             }
-            pub fn new(n: usize, tour: &[usize], dict_len: usize, sig_len: usize) -> Self {
-                let dict = Self::gen_dict_random(tour, dict_len);
+            fn gen_dict(tour: &[usize], dict_len: usize, sig_len: usize, hash: &[H]) -> Vec<usize> {
+                let mut prio = Map::new();
+                for k in 1..=sig_len {
+                    let mut i0 = 0;
+                    let mut i1 = 0;
+                    let mut st = Map::new();
+                    let mut h = 0;
+                    while i1 < tour.len() {
+                        // add
+                        while i1 < tour.len() && st.len() < k {
+                            let v_add = tour[i1];
+                            i1 += 1;
+                            if st.incr(v_add) {
+                                h ^= hash[v_add];
+                            }
+                        }
+                        // record
+                        if st.len() == k {
+                            prio.entry(h).or_insert(vec![]).push((i0, i1));
+                        }
+                        // del
+                        while st.len() >= k {
+                            let v_del = tour[i0];
+                            i0 += 1;
+                            if st.decr(&v_del) {
+                                h ^= hash[v_del];
+                            }
+                        }
+                    }
+                }
+                let mut prio = prio.into_iter().collect::<Vec<_>>();
+                prio.sort_by_cached_key(|(_h, ranges)| {
+                    Reverse(ranges.iter().map(|&(i0, i1)| i1 - i0 - 1).sum::<usize>())
+                });
+                let mut seg = LazySegmentTree::<bool, bool>::from_vec(
+                    |x, y| x || y,
+                    |x, y| x || y,
+                    |x, y| x || y,
+                    vec![false; tour.len()],
+                );
+                let mut dict = Vec::<usize>::with_capacity(dict_len);
+                let mut not_shown = tour.iter().copied().collect::<Set<_>>();
+                let mut shown = Set::new();
+                for (_h, vc) in prio.into_iter() {
+                    if vc.iter().any(|&(i0, i1)| seg.query(i0, i1 - 1)) {
+                        continue;
+                    }
+                    let (i0, i1) = vc[0];
+                    let mut adds = vec![];
+                    let mut st = Set::new();
+                    for i in i0..i1 {
+                        let v = tour[i];
+                        if st.insert(v) {
+                            adds.push(v);
+                        }
+                    }
+                    for &v in adds.iter() {
+                        if shown.contains(&v) && dict_len - dict.len() < 1 + not_shown.len() {
+                            break;
+                        }
+                        // fix
+                        shown.insert(v);
+                        not_shown.remove(&v);
+                        dict.push(v);
+                    }
+                }
+                dict
+            }
+            pub fn new(
+                n: usize,
+                tour: &[usize],
+                hash: &[H],
+                dict_len: usize,
+                sig_len: usize,
+            ) -> Self {
+                //let dict = Self::gen_dict_random(tour, dict_len);
+                let dict = Self::gen_dict(tour, dict_len, sig_len, hash);
                 let sets = (0..)
                     .take_while(|&i| i + sig_len - 1 < dict.len())
                     .map(|i0| {
@@ -6365,7 +6452,7 @@ mod solver {
         }
         pub fn solve(&self) {
             let tour = self.gen_tour_path();
-            let signal = Signal::new(self.n, &tour, self.dict_len, self.sig_len);
+            let signal = Signal::new(self.n, &tour, &self.hash, self.dict_len, self.sig_len);
             self.plan(tour, signal);
         }
     }
