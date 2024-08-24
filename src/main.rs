@@ -6142,9 +6142,13 @@ mod solver {
         pub struct Signal {
             dict: Vec<usize>,
             sets: Vec<Set<usize>>,
+            sig_len: usize,
+            ans: Vec<String>,
+            debug_signal: BitSet,
+            debug_blues: Vec<usize>,
         }
         impl Signal {
-            pub fn new(tour: &[usize], dict_len: usize, sig_len: usize) -> Self {
+            pub fn new(n: usize, tour: &[usize], dict_len: usize, sig_len: usize) -> Self {
                 let dict = {
                     let tour_st = tour.iter().copied().collect::<Set<_>>();
                     let mut not_shown = tour_st.clone();
@@ -6186,7 +6190,17 @@ mod solver {
                         assert!(sets.iter().any(|set| set.contains(&v)));
                     }
                 }
-                Self { dict, sets }
+                let debug_signal = BitSet::new(n);
+                let debug_blues = vec![];
+                let ans = vec![];
+                Self {
+                    dict,
+                    sets,
+                    sig_len,
+                    ans,
+                    debug_signal,
+                    debug_blues,
+                }
             }
             pub fn can_reach(&self, set: &Set<usize>) -> Option<usize> {
                 for (i0, key) in self.sets.iter().enumerate() {
@@ -6196,11 +6210,14 @@ mod solver {
                 }
                 None
             }
-            pub fn show(&self) {
+            pub fn show_ans(&self) {
                 for a in self.dict.iter() {
                     print!("{} ", a);
                 }
                 println!();
+                for ans in self.ans.iter() {
+                    println!("{ans}");
+                }
             }
             pub fn debug_show(&self) {
                 #[cfg(debug_assertions)]
@@ -6210,6 +6227,26 @@ mod solver {
                     }
                     eprintln!();
                 }
+            }
+            pub fn plan_signal(&mut self, i0: usize) {
+                #[cfg(debug_assertions)]
+                {
+                    while let Some(v) = self.debug_blues.pop() {
+                        self.debug_signal.set(v, false);
+                    }
+                    for &v in self.dict.iter().skip(i0).take(self.sig_len) {
+                        self.debug_signal.set(v, true);
+                        self.debug_blues.push(v);
+                    }
+                }
+                self.ans.push(format!("s {} {} 0", self.sig_len, i0));
+            }
+            pub fn plan_motion(&mut self, v: usize) {
+                #[cfg(debug_assertions)]
+                {
+                    debug_assert!(self.debug_signal.get(v));
+                }
+                self.ans.push(format!("m {}", v));
             }
         }
     }
@@ -6293,9 +6330,8 @@ mod solver {
             }
             tour
         }
-        fn plan(&self, tour: Vec<usize>, signal: Signal) {
+        fn plan(&self, tour: Vec<usize>, mut signal: Signal) {
             let mut now_pos = 0;
-            let mut ans = vec![];
             let mut score = 0;
             while now_pos < tour.len() - 1 {
                 let mut set = Set::new();
@@ -6316,22 +6352,19 @@ mod solver {
                     nxt_pos = to;
                 }
                 score += 1;
-                ans.push(format!("s {} {} 0", self.sig_len, best_i0));
+                signal.plan_signal(best_i0);
                 for pos in now_pos + 1..=nxt_pos {
-                    ans.push(format!("m {}", tour[pos]));
+                    signal.plan_motion(tour[pos]);
                 }
                 now_pos = nxt_pos;
             }
             eprintln!();
-            signal.show();
-            for ans in ans {
-                println!("{ans}");
-            }
+            signal.show_ans();
             eprintln!("{score}");
         }
         pub fn solve(&self) {
             let tour = self.gen_tour_path();
-            let signal = Signal::new(&tour, self.dict_len, self.sig_len);
+            let signal = Signal::new(self.n, &tour, self.dict_len, self.sig_len);
             self.plan(tour, signal);
         }
     }
