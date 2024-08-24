@@ -5978,12 +5978,13 @@ mod solver {
 
     mod highway {
         use super::*;
-        struct Highway {
-            dist: Vec<Vec<usize>>,
-        }
+        pub struct Highway {}
         impl Highway {
-            pub fn new(g: &[Vec<usize>], tgts: &Vec<usize>, rng: &mut ChaChaRng) -> Self {
-                let mut rng = ChaChaRng::from_seed([0; 32]);
+            pub fn gen_tour(
+                g: &[Vec<usize>],
+                tgts: &Vec<usize>,
+                rng: &mut ChaChaRng,
+            ) -> Vec<usize> {
                 let n = g.len();
                 let dist = (0..n)
                     .map(|ini| -> Vec<usize> {
@@ -6003,13 +6004,13 @@ mod solver {
                         dist
                     })
                     .collect::<Vec<_>>();
-                const HUB: usize = 15;
+                const HUB: usize = 60;
                 let hubs = {
                     let mut local_tgts = tgts.clone();
                     let mut ev = INF;
                     let mut best_hubs = vec![];
-                    for _ in 0..100 {
-                        local_tgts.shuffle(&mut rng);
+                    for _ in 0..1000 {
+                        local_tgts.shuffle(rng);
                         let hubs = local_tgts.iter().take(HUB).copied().collect::<Vec<_>>();
                         let mut hub_dist_max = 0;
                         for &sv in tgts.iter().skip(HUB) {
@@ -6077,7 +6078,7 @@ mod solver {
                     near_hub
                 };
                 // gen tour
-                {
+                let tour = {
                     let mut now = 0;
                     let mut tour = vec![now];
                     for &tgt in tgts.iter() {
@@ -6143,12 +6144,13 @@ mod solver {
                             }
                         }
                     }
-                }
-
-                Self { dist }
+                    tour
+                };
+                tour
             }
         }
     }
+    use highway::Highway;
     mod signal {
         use super::*;
         pub struct Signal {
@@ -6403,17 +6405,24 @@ mod solver {
             }
             let mut v = 0;
             let mut tour = vec![v];
+            let mut vis_cnt = vec![0; self.n];
             for &tgt in self.tgts.iter() {
+                let mut ad = vec![];
                 while v != tgt {
                     let mut nxt = 0;
-                    let mut nd = INF;
+                    let mut nd = None;
                     for nv in self.g[v].iter().copied() {
-                        if nd.chmin(dist[tgt][nv]) {
+                        let nd1 = (dist[tgt][nv], Reverse(vis_cnt[nv]));
+                        if nd.chmin(nd1) {
                             nxt = nv;
                         }
                     }
                     v = nxt;
+                    ad.push(v);
+                }
+                for v in ad {
                     tour.push(v);
+                    vis_cnt[v] += 1;
                 }
             }
             tour
