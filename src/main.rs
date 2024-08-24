@@ -60,6 +60,7 @@ mod change_min_max {
         fn chmax(&mut self, rhs: T) -> bool;
     }
     impl<T: PartialOrd + Copy> ChangeMinMax<T> for T {
+        #[inline(always)]
         fn chmin(&mut self, rhs: T) -> bool {
             if *self > rhs {
                 *self = rhs;
@@ -68,6 +69,7 @@ mod change_min_max {
                 false
             }
         }
+        #[inline(always)]
         fn chmax(&mut self, rhs: T) -> bool {
             if *self < rhs {
                 *self = rhs;
@@ -78,6 +80,7 @@ mod change_min_max {
         }
     }
     impl<T: PartialOrd + Copy> ChangeMinMax<T> for Option<T> {
+        #[inline(always)]
         fn chmin(&mut self, rhs: T) -> bool {
             if let Some(val) = *self {
                 if val > rhs {
@@ -91,6 +94,7 @@ mod change_min_max {
                 true
             }
         }
+        #[inline(always)]
         fn chmax(&mut self, rhs: T) -> bool {
             if let Some(val) = *self {
                 if val < rhs {
@@ -5939,6 +5943,179 @@ mod solver {
     type H = u128;
     const INF: usize = 1usize << 60;
 
+    mod highway {
+        use super::*;
+        struct Highway {
+            dist: Vec<Vec<usize>>,
+        }
+        impl Highway {
+            pub fn new(g: &[Vec<usize>], tgts: &Vec<usize>, rng: &mut ChaChaRng) -> Self {
+                let mut rng = ChaChaRng::from_seed([0; 32]);
+                let n = g.len();
+                let dist = (0..n)
+                    .map(|ini| -> Vec<usize> {
+                        let mut dist = vec![INF; n];
+                        dist[ini] = 0;
+                        let mut que = VecDeque::new();
+                        que.push_back(ini);
+                        while let Some(v0) = que.pop_front() {
+                            let d0 = dist[v0];
+                            let d1 = d0 + 1;
+                            for v1 in g[v0].iter().copied() {
+                                if dist[v1].chmin(d1) {
+                                    que.push_back(v1);
+                                }
+                            }
+                        }
+                        dist
+                    })
+                    .collect::<Vec<_>>();
+                const HUB: usize = 15;
+                let hubs = {
+                    let mut local_tgts = tgts.clone();
+                    let mut ev = INF;
+                    let mut best_hubs = vec![];
+                    for _ in 0..100 {
+                        local_tgts.shuffle(&mut rng);
+                        let hubs = local_tgts.iter().take(HUB).copied().collect::<Vec<_>>();
+                        let mut hub_dist_max = 0;
+                        for &sv in tgts.iter().skip(HUB) {
+                            let to_hub_dist = hubs.iter().map(|&hv| dist[hv][sv]).min().unwrap();
+                            hub_dist_max.chmax(to_hub_dist);
+                        }
+                        if ev.chmin(hub_dist_max) {
+                            best_hubs = hubs;
+                        }
+                    }
+                    best_hubs
+                };
+                // MST
+                let mst = {
+                    let mut es = vec![];
+                    for (hi0, &hv0) in hubs.iter().enumerate() {
+                        for &hv1 in hubs.iter().skip(hi0 + 1) {
+                            es.push((dist[hv0][hv1], (hv0, hv1)));
+                        }
+                    }
+                    es.sort();
+                    let mut uf = UnionFind::new(n);
+                    let mut mst = vec![vec![]; n];
+                    for (_, (a, b)) in es {
+                        if uf.same(a, b) {
+                            continue;
+                        }
+                        let mut v = a;
+                        while v != b {
+                            let mut ndist = INF;
+                            let mut to = 0;
+                            for &nv in g[v].iter() {
+                                if ndist.chmin(dist[b][nv]) {
+                                    to = nv;
+                                }
+                            }
+                            mst[v].push(to);
+                            mst[to].push(v);
+                            uf.unite(v, to);
+                            v = to;
+                        }
+                    }
+                    mst
+                };
+                // near hub
+                let near_hub = {
+                    let mut near_hub = vec![0; n];
+                    let mut near_hub_dist = vec![INF; n];
+                    for &hv in hubs.iter() {
+                        let mut que = VecDeque::new();
+                        que.push_back(hv);
+                        near_hub_dist[hv] = 0;
+                        near_hub[hv] = hv;
+                        while let Some(v) = que.pop_front() {
+                            let d0 = near_hub_dist[v];
+                            let d1 = d0 + 1;
+                            for &nv in g[v].iter() {
+                                if near_hub_dist[nv].chmin(d1) {
+                                    que.push_back(nv);
+                                    near_hub[nv] = hv;
+                                }
+                            }
+                        }
+                    }
+                    near_hub
+                };
+                // gen tour
+                {
+                    let mut now = 0;
+                    let mut tour = vec![now];
+                    for &tgt in tgts.iter() {
+                        // -> highway
+                        {
+                            let tv = near_hub[now];
+                            while now != tv {
+                                let mut to = 0;
+                                let mut nxt_dist = INF;
+                                for &nv in g[now].iter() {
+                                    if nxt_dist.chmin(dist[tv][nv]) {
+                                        to = nv;
+                                    }
+                                }
+                                tour.push(to);
+                                now = to;
+                            }
+                        }
+                        // on highway
+                        {
+                            let tv = near_hub[tgt];
+                            let mut que = VecDeque::new();
+                            que.push_back(now);
+                            let mut vis = Set::new();
+                            vis.insert(now);
+                            let mut pre = Map::new();
+                            while let Some(v0) = que.pop_front() {
+                                if v0 == tv {
+                                    break;
+                                }
+                                for &v1 in mst[v0].iter() {
+                                    if vis.insert(v1) {
+                                        que.push_back(v1);
+                                        pre.insert(v1, v0);
+                                    }
+                                }
+                            }
+                            let mut piv = tv;
+                            let mut ad = vec![];
+                            while piv != now {
+                                let pv = pre[&piv];
+                                ad.push(piv);
+                                piv = pv;
+                            }
+                            for nv in ad.into_iter().rev() {
+                                tour.push(nv);
+                            }
+                            now = tv;
+                        }
+                        // -> highway
+                        {
+                            let tv = tgt;
+                            while now != tv {
+                                let mut to = 0;
+                                let mut nxt_dist = INF;
+                                for &nv in g[now].iter() {
+                                    if nxt_dist.chmin(dist[tv][nv]) {
+                                        to = nv;
+                                    }
+                                }
+                                tour.push(to);
+                                now = to;
+                            }
+                        }
+                    }
+                }
+
+                Self { dist }
+            }
+        }
+    }
     mod signal {
         use super::*;
         pub struct Signal {
@@ -6008,6 +6185,7 @@ mod solver {
         sig_len: usize,
         g: Vec<Vec<usize>>,
         tgts: Vec<usize>,
+        xy: Vec<(usize, usize)>,
         hash: Vec<H>,
     }
     impl Solver {
@@ -6026,10 +6204,9 @@ mod solver {
                 g[b].push(a);
             }
             let tgts = read_vec::<usize>(t);
-            for _ in 0..n {
-                let _ = read::<usize>();
-                let _ = read::<usize>();
-            }
+            let xy = (0..n)
+                .map(|_| (read::<usize>(), read::<usize>()))
+                .collect::<Vec<_>>();
             let mut rand = XorShift64::new();
             let hash = (0..n)
                 .map(|_| ((rand.next_usize() as H) << 64) | (rand.next_usize() as H))
@@ -6042,6 +6219,7 @@ mod solver {
                 sig_len,
                 g,
                 tgts,
+                xy,
                 hash,
             }
         }
