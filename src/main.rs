@@ -6148,32 +6148,33 @@ mod solver {
             debug_blues: Vec<usize>,
         }
         impl Signal {
+            fn gen_dict_random(tour: &[usize], dict_len: usize) -> Vec<usize> {
+                let tour_st = tour.iter().copied().collect::<Set<_>>();
+                let mut not_shown = tour_st.clone();
+                let tour_st = tour_st.into_iter().collect::<Vec<_>>();
+                let mut dict = Vec::<usize>::with_capacity(dict_len);
+                let mut rand = XorShift64::new();
+                loop {
+                    let av = tour_st[rand.next_usize() % tour_st.len()];
+                    dict.push(av);
+                    not_shown.remove(&av);
+                    if dict_len - dict.len() <= not_shown.len() {
+                        break;
+                    }
+                }
+                for v in not_shown {
+                    dict.push(v);
+                }
+                #[cfg(debug_assertions)]
+                {
+                    for &v in tour.iter() {
+                        assert!(dict.contains(&v));
+                    }
+                }
+                dict
+            }
             pub fn new(n: usize, tour: &[usize], dict_len: usize, sig_len: usize) -> Self {
-                let dict = {
-                    let tour_st = tour.iter().copied().collect::<Set<_>>();
-                    let mut not_shown = tour_st.clone();
-                    let tour_st = tour_st.into_iter().collect::<Vec<_>>();
-                    let mut dict = Vec::<usize>::with_capacity(dict_len);
-                    let mut rand = XorShift64::new();
-                    loop {
-                        let av = tour_st[rand.next_usize() % tour_st.len()];
-                        dict.push(av);
-                        not_shown.remove(&av);
-                        if dict_len - dict.len() <= not_shown.len() {
-                            break;
-                        }
-                    }
-                    for v in not_shown {
-                        dict.push(v);
-                    }
-                    #[cfg(debug_assertions)]
-                    {
-                        for &v in tour.iter() {
-                            assert!(dict.contains(&v));
-                        }
-                    }
-                    dict
-                };
+                let dict = Self::gen_dict_random(tour, dict_len);
                 let sets = (0..)
                     .take_while(|&i| i + sig_len - 1 < dict.len())
                     .map(|i0| {
