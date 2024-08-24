@@ -6461,6 +6461,7 @@ mod solver {
         }
         pub fn solve(&self) {
             let tour = self.gen_tour_path();
+            //let tour = Highway::gen_tour(&self.g, &self.tgts, &mut ChaChaRng::from_seed([0; 32]));
             let signal = Signal::new(self.n, &tour, &self.hash, self.dict_len, self.sig_len);
             self.plan(tour, signal);
         }
