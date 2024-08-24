@@ -5154,7 +5154,7 @@ mod point {
 }
 
 mod bit_set {
-    #[derive(Clone)]
+    #[derive(Clone, PartialEq, Eq)]
     pub struct BitSet {
         pub x: Vec<u64>,
     }
@@ -5167,12 +5167,14 @@ mod bit_set {
             (self.x[i >> 6] >> (i & 63)) & 1 != 0
         }
         #[inline(always)]
-        pub fn set(&mut self, i: usize, b: bool) {
+        pub fn set(&mut self, i: usize, b: bool) -> bool {
+            let update = ((self.x[i >> 6] >> (i & 63)) & 1) == if b { 0 } else { 1 };
             if b {
                 self.x[i >> 6] |= 1u64 << (i & 63);
             } else {
                 self.x[i >> 6] &= !(1u64 << (i & 63));
             }
+            update
         }
         pub fn count_ones(&self) -> u32 {
             self.x.iter().map(|x| x.count_ones()).sum()
@@ -5180,8 +5182,9 @@ mod bit_set {
     }
     impl std::ops::BitAnd for BitSet {
         type Output = Self;
+        #[inline(always)]
         fn bitand(self, rhs: Self) -> Self::Output {
-            Self {
+            Self::Output {
                 x: self
                     .x
                     .into_iter()
@@ -5191,7 +5194,22 @@ mod bit_set {
             }
         }
     }
+    impl std::ops::BitAnd for &BitSet {
+        type Output = BitSet;
+        #[inline(always)]
+        fn bitand(self, rhs: Self) -> Self::Output {
+            Self::Output {
+                x: self
+                    .x
+                    .iter()
+                    .zip(rhs.x.iter())
+                    .map(|(&x, &y)| x & y)
+                    .collect::<Vec<_>>(),
+            }
+        }
+    }
     impl std::ops::BitAndAssign for BitSet {
+        #[inline(always)]
         fn bitand_assign(&mut self, rhs: Self) {
             self.x.iter_mut().zip(rhs.x).for_each(|(x, y)| *x &= y);
         }
@@ -5210,12 +5228,14 @@ mod bit_set {
         }
     }
     impl std::ops::BitOrAssign for BitSet {
+        #[inline(always)]
         fn bitor_assign(&mut self, rhs: Self) {
             self.x.iter_mut().zip(rhs.x).for_each(|(x, y)| *x |= y);
         }
     }
     impl std::ops::BitXor for BitSet {
         type Output = Self;
+        #[inline(always)]
         fn bitxor(self, rhs: Self) -> Self::Output {
             Self {
                 x: self
@@ -5228,6 +5248,7 @@ mod bit_set {
         }
     }
     impl std::ops::BitXorAssign for BitSet {
+        #[inline(always)]
         fn bitxor_assign(&mut self, rhs: Self) {
             self.x.iter_mut().zip(rhs.x).for_each(|(x, y)| *x ^= y);
         }
@@ -6120,10 +6141,10 @@ mod solver {
         use super::*;
         pub struct Signal {
             dict: Vec<usize>,
-            part: Map<H, (usize, usize)>, // start, len
+            sets: Vec<Set<usize>>,
         }
         impl Signal {
-            pub fn new(tour: &[usize], hash: &[H], dict_len: usize, sig_len: usize) -> Self {
+            pub fn new(tour: &[usize], dict_len: usize, sig_len: usize) -> Self {
                 let dict = {
                     let tour_st = tour.iter().copied().collect::<Set<_>>();
                     let mut not_shown = tour_st.clone();
@@ -6143,36 +6164,52 @@ mod solver {
                     }
                     #[cfg(debug_assertions)]
                     {
-                        for v in tour_st {
+                        for &v in tour.iter() {
                             assert!(dict.contains(&v));
                         }
                     }
                     dict
                 };
-                let mut part = Map::new();
-                for i0 in 0..dict.len() {
-                    let mut h = 0;
-                    let mut h_st = Set::new();
-                    for d in 0..sig_len {
-                        let i = i0 + d;
-                        if i < dict.len() {
-                            if h_st.insert(dict[i]) {
-                                h ^= hash[dict[i]];
-                            }
-                            part.insert(h, (i0, d + 1));
+                let sets = (0..)
+                    .take_while(|&i| i + sig_len - 1 < dict.len())
+                    .map(|i0| {
+                        let mut set = Set::new();
+                        for i in (i0..).take(sig_len) {
+                            set.insert(dict[i]);
                         }
+                        set
+                    })
+                    .collect::<Vec<_>>();
+                #[cfg(debug_assertions)]
+                {
+                    for &v in tour.iter() {
+                        assert!(sets.iter().any(|set| set.contains(&v)));
                     }
                 }
-                Self { dict, part }
+                Self { dict, sets }
             }
-            pub fn can_reach(&self, h: H) -> Option<&(usize, usize)> {
-                self.part.get(&h)
+            pub fn can_reach(&self, set: &Set<usize>) -> Option<usize> {
+                for (i0, key) in self.sets.iter().enumerate() {
+                    if set.iter().all(|&v| key.contains(&v)) {
+                        return Some(i0);
+                    }
+                }
+                None
             }
             pub fn show(&self) {
                 for a in self.dict.iter() {
                     print!("{} ", a);
                 }
                 println!();
+            }
+            pub fn debug_show(&self) {
+                #[cfg(debug_assertions)]
+                {
+                    for a in self.dict.iter() {
+                        eprint!("{} ", a);
+                    }
+                    eprintln!();
+                }
             }
         }
     }
@@ -6257,56 +6294,44 @@ mod solver {
             tour
         }
         fn plan(&self, tour: Vec<usize>, signal: Signal) {
-            let mut dp = vec![INF; tour.len()];
-            let mut pre = vec![None; tour.len()];
-            dp[0] = 0;
-            for i0 in 0..tour.len() {
-                let d0 = dp[i0];
-                let d1 = d0 + 1;
-                let mut h = 0;
-                let mut h_st = Set::new();
-                for to in i0 + 1..tour.len() {
-                    if h_st.insert(tour[to]) {
-                        if h_st.len() > self.sig_len {
+            let mut now_pos = 0;
+            let mut ans = vec![];
+            let mut score = 0;
+            while now_pos < tour.len() - 1 {
+                let mut set = Set::new();
+                set.insert(tour[now_pos + 1]);
+                let mut best_i0 = signal.can_reach(&set).unwrap();
+                let mut nxt_pos = now_pos + 1;
+                for to in nxt_pos + 1..tour.len() {
+                    let nval = tour[to];
+                    if set.insert(nval) {
+                        if set.len() > self.sig_len {
                             break;
                         }
-                        h ^= self.hash[tour[to]];
+                        let Some(i0) = signal.can_reach(&set) else {
+                            break;
+                        };
+                        best_i0 = i0;
                     }
-                    let Some(&dict_key) = signal.can_reach(h) else {
-                        debug_assert!(to != i0 + 1);
-                        break;
-                    };
-                    if dp[to].chmin(d1) {
-                        pre[to] = Some((i0, dict_key));
-                    }
+                    nxt_pos = to;
                 }
+                score += 1;
+                ans.push(format!("s {} {} 0", self.sig_len, best_i0));
+                for pos in now_pos + 1..=nxt_pos {
+                    ans.push(format!("m {}", tour[pos]));
+                }
+                now_pos = nxt_pos;
             }
-            let sig = {
-                let mut v = tour.len() - 1;
-                let mut sig = vec![None; tour.len()];
-                while let Some((pv, dict_key)) = pre[v] {
-                    sig[pv] = Some(dict_key);
-                    v = pv;
-                }
-                sig
-            };
-            // answer
-            {
-                let score = dp[tour.len() - 1];
-                eprintln!("{}", score);
-                signal.show();
-                for i in 0..tour.len() - 1 {
-                    if let Some((dict_i0, dict_ln)) = sig[i] {
-                        debug_assert!(dict_ln > 0);
-                        println!("s {} {} 0", dict_ln, dict_i0);
-                    }
-                    println!("m {}", tour[i + 1]);
-                }
+            eprintln!();
+            signal.show();
+            for ans in ans {
+                println!("{ans}");
             }
+            eprintln!("{score}");
         }
         pub fn solve(&self) {
             let tour = self.gen_tour_path();
-            let signal = Signal::new(&tour, &self.hash, self.dict_len, self.sig_len);
+            let signal = Signal::new(&tour, self.dict_len, self.sig_len);
             self.plan(tour, signal);
         }
     }
