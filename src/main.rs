@@ -6467,3 +6467,173 @@ mod solver {
         }
     }
 }
+
+mod solver2 {
+    use super::*;
+    type Map<K, V> = BTreeMap<K, V>;
+    type Set<T> = BTreeSet<T>;
+    type H = u128;
+    const INF: usize = 1usize << 60;
+    pub struct Solver {
+        t0: Instant,
+        n: usize,
+        t: usize,
+        dict_len: usize,
+        sig_len: usize,
+        g: Vec<Set<usize>>,
+        tgts: Vec<usize>,
+        xy: Vec<(i32, i32)>,
+        hash: Vec<H>,
+    }
+    impl Solver {
+        pub fn new() -> Self {
+            let t0 = Instant::now();
+            let n = read::<usize>();
+            let m = read::<usize>();
+            let t = read::<usize>();
+            let dict_len = read::<usize>();
+            let sig_len = read::<usize>();
+            let mut g = vec![Set::new(); n];
+            for _ in 0..m {
+                let a = read::<usize>();
+                let b = read::<usize>();
+                g[a].insert(b);
+                g[b].insert(a);
+            }
+            let tgts = read_vec::<usize>(t);
+            let xy = (0..n)
+                .map(|_| (read::<i32>(), read::<i32>()))
+                .collect::<Vec<_>>();
+            let mut rand = XorShift64::new();
+            let hash = (0..n)
+                .map(|_| ((rand.next_usize() as H) << 64) | (rand.next_usize() as H))
+                .collect::<Vec<_>>();
+            Self {
+                t0,
+                n,
+                t,
+                dict_len,
+                sig_len,
+                g,
+                tgts,
+                xy,
+                hash,
+            }
+        }
+        fn uf(n: usize, g: &[Set<usize>], xy: &[(i32, i32)], sig_len: usize) -> UnionFind {
+            let mut vs = (0..n).collect::<Vec<_>>();
+            vs.sort_by(|&a, &b| {
+                let (x, y) = xy[a];
+                let da = (((x - 500).pow(2) + (y - 500).pow(2)) as f32).sqrt();
+                let (x, y) = xy[b];
+                let db = (((x - 500).pow(2) + (y - 500).pow(2)) as f32).sqrt();
+                da.partial_cmp(&db).unwrap()
+            });
+            let mut uf = UnionFind::new(n);
+            for (i, &iv) in vs.iter().enumerate() {
+                for &ov in vs.iter().skip(i + 1) {
+                    if !g[ov].contains(&iv) {
+                        continue;
+                    }
+                    if uf.group_size(ov) + uf.group_size(iv) > sig_len {
+                        continue;
+                    }
+                    uf.unite(iv, ov);
+                }
+            }
+            uf
+        }
+        fn root_graph(g: &[Set<usize>], uf: &mut UnionFind) -> (Vec<Set<usize>>, Vec<Vec<usize>>) {
+            let n = g.len();
+            let mut rg = vec![Set::new(); n];
+            for v0 in 0..n {
+                let r0 = uf.root(v0);
+                for v1 in g[v0].iter().copied() {
+                    let r1 = uf.root(v1);
+                    if r0 == r1 {
+                        continue;
+                    }
+                    rg[r0].insert(r1);
+                    rg[r1].insert(r0);
+                }
+            }
+            let rdist = (0..n)
+                .map(|ini| -> Vec<usize> {
+                    let mut rdist = vec![INF; n];
+                    let rini = uf.root(ini);
+                    if ini != rini {
+                        return rdist;
+                    }
+                    rdist[rini] = 0;
+                    let mut que = VecDeque::new();
+                    que.push_back(rini);
+                    while let Some(v0) = que.pop_front() {
+                        let d0 = rdist[v0];
+                        let d1 = d0 + 1;
+                        for v1 in rg[v0].iter().copied() {
+                            if rdist[v1].chmin(d1) {
+                                que.push_back(v1);
+                            }
+                        }
+                    }
+                    rdist
+                })
+                .collect::<Vec<_>>();
+            (rg, rdist)
+        }
+        fn motion_parts(
+            g: &[Set<usize>],
+            uf: &mut UnionFind,
+        ) -> (Vec<Vec<(usize, usize)>>, Vec<Vec<Vec<usize>>>) {
+            let n = g.len();
+            let mut rcon = vec![vec![(INF, INF); n]; n];
+            for a in 0..n {
+                let ra = uf.root(a);
+                for b in g[a].iter().copied() {
+                    let rb = uf.root(b);
+                    rcon[ra][rb] = (a, b);
+                }
+            }
+            fn dfs(
+                v: usize,
+                t: usize,
+                g: &[Set<usize>],
+                vis: &mut Set<usize>,
+                uf: &mut UnionFind,
+                path: &mut Vec<usize>,
+            ) -> bool {
+                if v == t {
+                    return true;
+                }
+                vis.insert(v);
+                let rv = uf.root(v);
+                for nv in g[v].iter().copied() {
+                    if uf.root(nv) != rv {
+                        continue;
+                    }
+                    if vis.contains(&nv) {
+                        continue;
+                    }
+                    path.push(nv);
+                    if dfs(nv, t, g, vis, uf, path) {
+                        return true;
+                    }
+                    path.pop();
+                }
+                false
+            }
+            let mut inner_path = vec![vec![vec![]; n]];
+            for v in 0..n {
+                let rv = uf.root(v);
+                dfs(v, rv, &g, &mut Set::new(), uf, &mut inner_path[v][rv]);
+                dfs(rv, v, &g, &mut Set::new(), uf, &mut inner_path[rv][v]);
+            }
+            (rcon, inner_path)
+        }
+        pub fn solve(&self) {
+            let mut uf = Self::uf(self.n, &self.g, &self.xy, self.sig_len);
+            let (rg, rdist) = Self::root_graph(&self.g, &mut uf);
+            let (bridge, parts) = Self::motion_parts(&self.g, &mut uf);
+        }
+    }
+}
