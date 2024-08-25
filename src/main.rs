@@ -5966,7 +5966,7 @@ use procon_reader::*;
 //////////////////////////////////////////////////////////////////////////////////////
 
 fn main() {
-    solver::Solver::new().solve();
+    solver2::Solver::new().solve();
 }
 
 mod solver {
@@ -6474,6 +6474,84 @@ mod solver2 {
     type Set<T> = BTreeSet<T>;
     type H = u128;
     const INF: usize = 1usize << 60;
+    mod comm {
+        use super::*;
+        pub struct Comm {
+            dict: Vec<usize>,
+            root_to_i0ln: Vec<(usize, usize)>,
+            ans: Vec<String>,
+            score: usize,
+            // debug
+            blues: Vec<usize>,
+            sig_state: Vec<bool>,
+        }
+        impl Comm {
+            pub fn new(n: usize, dict_len: usize, uf: &mut UnionFind) -> Self {
+                let mut subs = vec![vec![]; n];
+                for v in 0..n {
+                    subs[uf.root(v)].push(v);
+                }
+                let mut dict = Vec::with_capacity(dict_len);
+                let mut root_to_i0ln = vec![(INF, INF); n];
+                subs.into_iter().enumerate().for_each(|(rv, subs)| {
+                    if uf.root(rv) == rv {
+                        root_to_i0ln[rv] = (dict.len(), subs.len());
+                        subs.into_iter().for_each(|v| {
+                            dict.push(v);
+                        })
+                    }
+                });
+                while dict.len() < dict_len {
+                    dict.push(0);
+                }
+                Self {
+                    dict,
+                    root_to_i0ln,
+                    ans: vec![],
+                    score: 0,
+                    blues: vec![],
+                    sig_state: vec![false; n],
+                }
+            }
+            pub fn set_sig(&mut self, rv: usize) {
+                let (i0, ln) = self.root_to_i0ln[rv];
+                debug_assert!(i0 != INF && ln != INF);
+                self.ans.push(format!("s {} {} 0", ln, i0));
+                self.score += 1;
+                #[cfg(debug_assertions)]
+                {
+                    while let Some(v) = self.blues.pop() {
+                        self.sig_state[v] = false;
+                    }
+                    for i in (i0..).take(ln) {
+                        let v = self.dict[i];
+                        self.sig_state[v] = true;
+                        self.blues.push(v);
+                    }
+                }
+            }
+            pub fn motion(&mut self, tv: usize) {
+                self.ans.push(format!("m {}", tv));
+                #[cfg(debug_assertions)]
+                {
+                    debug_assert!(self.sig_state[tv]);
+                }
+            }
+            pub fn answer(&self) {
+                eprintln!();
+                for v in self.dict.iter() {
+                    print!("{} ", v)
+                }
+                println!();
+                for ans in self.ans.iter() {
+                    println!("{ans}");
+                }
+                eprintln!();
+                eprintln!("{}", self.score);
+            }
+        }
+    }
+    use comm::Comm;
     pub struct Solver {
         t0: Instant,
         n: usize,
@@ -6530,8 +6608,8 @@ mod solver2 {
                 da.partial_cmp(&db).unwrap()
             });
             let mut uf = UnionFind::new(n);
-            for (i, &iv) in vs.iter().enumerate() {
-                for &ov in vs.iter().skip(i + 1) {
+            for (oi, &ov) in vs.iter().enumerate() {
+                for &iv in vs.iter().take(oi) {
                     if !g[ov].contains(&iv) {
                         continue;
                     }
@@ -6541,6 +6619,7 @@ mod solver2 {
                     uf.unite(iv, ov);
                 }
             }
+            debug_assert!((0..n).all(|v| uf.group_size(v) <= sig_len));
             uf
         }
         fn root_graph(g: &[Set<usize>], uf: &mut UnionFind) -> (Vec<Set<usize>>, Vec<Vec<usize>>) {
@@ -6608,7 +6687,7 @@ mod solver2 {
                 vis.insert(v);
                 let rv = uf.root(v);
                 for nv in g[v].iter().copied() {
-                    if uf.root(nv) != rv {
+                    if !uf.same(nv, rv) {
                         continue;
                     }
                     if vis.contains(&nv) {
@@ -6622,11 +6701,19 @@ mod solver2 {
                 }
                 false
             }
-            let mut inner_path = vec![vec![vec![]; n]];
+            let mut inner_path = vec![vec![vec![]; n]; n];
             for v in 0..n {
                 let rv = uf.root(v);
-                dfs(v, rv, &g, &mut Set::new(), uf, &mut inner_path[v][rv]);
-                dfs(rv, v, &g, &mut Set::new(), uf, &mut inner_path[rv][v]);
+                if v != rv {
+                    dfs(v, rv, &g, &mut Set::new(), uf, &mut inner_path[v][rv]);
+                    inner_path[rv][v] = inner_path[v][rv]
+                        .iter()
+                        .rev()
+                        .skip(1)
+                        .copied()
+                        .chain(vec![v].into_iter())
+                        .collect::<Vec<_>>();
+                }
             }
             (rcon, inner_path)
         }
@@ -6634,6 +6721,61 @@ mod solver2 {
             let mut uf = Self::uf(self.n, &self.g, &self.xy, self.sig_len);
             let (rg, rdist) = Self::root_graph(&self.g, &mut uf);
             let (bridge, parts) = Self::motion_parts(&self.g, &mut uf);
+            let mut comm = Comm::new(self.n, self.dict_len, &mut uf);
+            // main
+            let mut now_v = 0;
+            let mut now_r = uf.root(now_v);
+            comm.set_sig(now_r);
+            for &tgt in self.tgts.iter() {
+                // to center
+                for &nv in parts[now_v][now_r].iter() {
+                    comm.motion(nv);
+                }
+                now_v = now_r;
+                // center to another center
+                while now_r != uf.root(tgt) {
+                    // now at root center
+                    debug_assert!(uf.root(now_v) == now_v);
+
+                    // plan next root
+                    let mut nxt_r = 0;
+                    let mut nxt_r_dist = INF;
+                    for &nr in rg[now_r].iter() {
+                        if nxt_r_dist.chmin(rdist[uf.root(tgt)][nr]) {
+                            nxt_r = nr;
+                        }
+                    }
+                    let nxt_r = nxt_r;
+                    debug_assert_ne!(now_r, nxt_r);
+                    // plan bridge
+                    let (b0, b1) = bridge[now_r][nxt_r];
+                    debug_assert!(uf.root(b0) == now_r);
+                    debug_assert!(uf.root(b1) == nxt_r);
+                    // move to bridge entry
+                    for &nv in parts[now_v][b0].iter() {
+                        comm.motion(nv);
+                    }
+                    // transition to next root
+                    comm.set_sig(nxt_r);
+                    comm.motion(b1);
+                    now_v = b1;
+                    now_r = nxt_r;
+                    if b1 == 29 {
+                        eprintln!();
+                    }
+                    // move to next center
+                    for &nv in parts[now_v][now_r].iter() {
+                        comm.motion(nv);
+                    }
+                    now_v = now_r;
+                }
+                // to tgt
+                for &nv in parts[now_v][tgt].iter() {
+                    comm.motion(nv);
+                }
+                now_v = tgt;
+            }
+            comm.answer();
         }
     }
 }
