@@ -6484,6 +6484,7 @@ mod solver2 {
             // debug
             blues: Vec<usize>,
             sig_state: Vec<bool>,
+            now_v: usize,
         }
         impl Comm {
             pub fn new(n: usize, dict_len: usize, uf: &mut UnionFind) -> Self {
@@ -6511,6 +6512,7 @@ mod solver2 {
                     score: 0,
                     blues: vec![],
                     sig_state: vec![false; n],
+                    now_v: 0,
                 }
             }
             pub fn set_sig(&mut self, rv: usize) {
@@ -6531,11 +6533,13 @@ mod solver2 {
                 }
             }
             pub fn motion(&mut self, tv: usize) {
-                self.ans.push(format!("m {}", tv));
                 #[cfg(debug_assertions)]
                 {
+                    debug_assert!(self.now_v != tv);
                     debug_assert!(self.sig_state[tv]);
                 }
+                self.ans.push(format!("m {}", tv));
+                self.now_v = tv;
             }
             pub fn answer(&self) {
                 eprintln!();
@@ -6598,7 +6602,12 @@ mod solver2 {
                 hash,
             }
         }
-        fn uf(n: usize, g: &[Set<usize>], xy: &[(i32, i32)], sig_len: usize) -> UnionFind {
+        fn split_into_subsets(
+            n: usize,
+            g: &[Set<usize>],
+            xy: &[(i32, i32)],
+            sig_len: usize,
+        ) -> UnionFind {
             let mut vs = (0..n).collect::<Vec<_>>();
             vs.sort_by(|&a, &b| {
                 let (x, y) = xy[a];
@@ -6718,7 +6727,7 @@ mod solver2 {
             (rcon, inner_path)
         }
         pub fn solve(&self) {
-            let mut uf = Self::uf(self.n, &self.g, &self.xy, self.sig_len);
+            let mut uf = Self::split_into_subsets(self.n, &self.g, &self.xy, self.sig_len);
             let (rg, rdist) = Self::root_graph(&self.g, &mut uf);
             let (bridge, parts) = Self::motion_parts(&self.g, &mut uf);
             let mut comm = Comm::new(self.n, self.dict_len, &mut uf);
@@ -6760,9 +6769,6 @@ mod solver2 {
                     comm.motion(b1);
                     now_v = b1;
                     now_r = nxt_r;
-                    if b1 == 29 {
-                        eprintln!();
-                    }
                     // move to next center
                     for &nv in parts[now_v][now_r].iter() {
                         comm.motion(nv);
