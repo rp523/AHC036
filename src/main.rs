@@ -6610,21 +6610,23 @@ mod solver2 {
         }
         fn root_graph(
             g: &[Vec<(usize, usize)>],
+            es: &[(usize, usize)],
             uf: &mut UnionFind,
         ) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
             let n = g.len();
-            let mut rg = vec![vec![]; n];
-            for v0 in 0..n {
-                let r0 = uf.root(v0);
-                for (v1, _) in g[v0].iter().copied() {
-                    let r1 = uf.root(v1);
-                    if r0 == r1 {
-                        continue;
-                    }
-                    rg[r0].push(r1);
-                    rg[r1].push(r0);
+
+            let rg = {
+                let mut rg = vec![Set::new(); n];
+                for &(a, b) in es.iter() {
+                    let ra = uf.root(a);
+                    let rb = uf.root(b);
+                    rg[ra].insert(rb);
+                    rg[rb].insert(ra);
                 }
-            }
+                rg.into_iter()
+                    .map(|rvs| rvs.into_iter().collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            };
             let rdist = (0..n)
                 .map(|ini| -> Vec<usize> {
                     let mut rdist = vec![INF; n];
@@ -6708,7 +6710,7 @@ mod solver2 {
         }
         pub fn solve(&self) {
             let mut uf = self.split_into_subsets();
-            let (rg, rdist) = Self::root_graph(&self.g, &mut uf);
+            let (rg, rdist) = Self::root_graph(&self.g, &self.es, &mut uf);
             let (bridge, parts) = Self::motion_parts(&self.g, &mut uf);
             let mut comm = Comm::new(self.n, self.dict_len, &mut uf);
             // main
@@ -6800,13 +6802,15 @@ mod solver2 {
                         ecnt[nxt_ei] += 1;
                     }
                 }
-                let mut ecnt = ecnt.into_iter().enumerate().collect::<Vec<_>>();
-                ecnt.sort_by_cached_key(|&(_ei, ecnt)| Reverse(ecnt));
                 ecnt
             };
             let mut uf = UnionFind::new(self.n);
             {
-                for (ei, ecnt) in ecnt {
+                let mut que = BinaryHeap::new();
+                for ei in 0..self.m {
+                    que.push((ecnt[ei], ei));
+                }
+                while let Some((ecnt, ei)) = que.pop() {
                     if ecnt <= 1 {
                         break;
                     }
