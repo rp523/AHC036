@@ -6559,10 +6559,12 @@ mod solver2 {
     pub struct Solver {
         t0: Instant,
         n: usize,
+        m: usize,
         t: usize,
         dict_len: usize,
         sig_len: usize,
-        g: Vec<Set<usize>>,
+        g: Vec<Vec<(usize, usize)>>,
+        es: Vec<(usize, usize)>,
         tgts: Vec<usize>,
         xy: Vec<(i32, i32)>,
         hash: Vec<H>,
@@ -6575,12 +6577,14 @@ mod solver2 {
             let t = read::<usize>();
             let dict_len = read::<usize>();
             let sig_len = read::<usize>();
-            let mut g = vec![Set::new(); n];
-            for _ in 0..m {
+            let mut g = vec![vec![]; n];
+            let mut es = Vec::with_capacity(m);
+            for ei in 0..m {
                 let a = read::<usize>();
                 let b = read::<usize>();
-                g[a].insert(b);
-                g[b].insert(a);
+                g[a].push((b, ei));
+                g[b].push((a, ei));
+                es.push((a, b));
             }
             let tgts = read_vec::<usize>(t);
             let xy = (0..n)
@@ -6593,56 +6597,32 @@ mod solver2 {
             Self {
                 t0,
                 n,
+                m,
                 t,
                 dict_len,
                 sig_len,
                 g,
+                es,
                 tgts,
                 xy,
                 hash,
             }
         }
-        fn split_into_subsets(
-            n: usize,
-            g: &[Set<usize>],
-            xy: &[(i32, i32)],
-            sig_len: usize,
-        ) -> UnionFind {
-            let mut vs = (0..n).collect::<Vec<_>>();
-            vs.sort_by(|&a, &b| {
-                let (x, y) = xy[a];
-                let da = (((x - 500).pow(2) + (y - 500).pow(2)) as f32).sqrt();
-                let (x, y) = xy[b];
-                let db = (((x - 500).pow(2) + (y - 500).pow(2)) as f32).sqrt();
-                da.partial_cmp(&db).unwrap()
-            });
-            let mut uf = UnionFind::new(n);
-            for (oi, &ov) in vs.iter().enumerate() {
-                for &iv in vs.iter().take(oi) {
-                    if !g[ov].contains(&iv) {
-                        continue;
-                    }
-                    if uf.group_size(ov) + uf.group_size(iv) > sig_len {
-                        continue;
-                    }
-                    uf.unite(iv, ov);
-                }
-            }
-            debug_assert!((0..n).all(|v| uf.group_size(v) <= sig_len));
-            uf
-        }
-        fn root_graph(g: &[Set<usize>], uf: &mut UnionFind) -> (Vec<Set<usize>>, Vec<Vec<usize>>) {
+        fn root_graph(
+            g: &[Vec<(usize, usize)>],
+            uf: &mut UnionFind,
+        ) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
             let n = g.len();
-            let mut rg = vec![Set::new(); n];
+            let mut rg = vec![vec![]; n];
             for v0 in 0..n {
                 let r0 = uf.root(v0);
-                for v1 in g[v0].iter().copied() {
+                for (v1, _) in g[v0].iter().copied() {
                     let r1 = uf.root(v1);
                     if r0 == r1 {
                         continue;
                     }
-                    rg[r0].insert(r1);
-                    rg[r1].insert(r0);
+                    rg[r0].push(r1);
+                    rg[r1].push(r0);
                 }
             }
             let rdist = (0..n)
@@ -6670,14 +6650,14 @@ mod solver2 {
             (rg, rdist)
         }
         fn motion_parts(
-            g: &[Set<usize>],
+            g: &[Vec<(usize, usize)>],
             uf: &mut UnionFind,
         ) -> (Vec<Vec<(usize, usize)>>, Vec<Vec<Vec<usize>>>) {
             let n = g.len();
             let mut rcon = vec![vec![(INF, INF); n]; n];
             for a in 0..n {
                 let ra = uf.root(a);
-                for b in g[a].iter().copied() {
+                for (b, _) in g[a].iter().copied() {
                     let rb = uf.root(b);
                     rcon[ra][rb] = (a, b);
                 }
@@ -6685,7 +6665,7 @@ mod solver2 {
             fn dfs(
                 v: usize,
                 t: usize,
-                g: &[Set<usize>],
+                g: &[Vec<(usize, usize)>],
                 vis: &mut Set<usize>,
                 uf: &mut UnionFind,
                 path: &mut Vec<usize>,
@@ -6695,7 +6675,7 @@ mod solver2 {
                 }
                 vis.insert(v);
                 let rv = uf.root(v);
-                for nv in g[v].iter().copied() {
+                for (nv, _) in g[v].iter().copied() {
                     if !uf.same(nv, rv) {
                         continue;
                     }
@@ -6727,7 +6707,7 @@ mod solver2 {
             (rcon, inner_path)
         }
         pub fn solve(&self) {
-            let mut uf = Self::split_into_subsets(self.n, &self.g, &self.xy, self.sig_len);
+            let mut uf = self.split_into_subsets();
             let (rg, rdist) = Self::root_graph(&self.g, &mut uf);
             let (bridge, parts) = Self::motion_parts(&self.g, &mut uf);
             let mut comm = Comm::new(self.n, self.dict_len, &mut uf);
@@ -6782,6 +6762,85 @@ mod solver2 {
                 now_v = tgt;
             }
             comm.answer();
+        }
+        fn split_into_subsets(&self) -> UnionFind {
+            let dist = (0..self.n)
+                .map(|ini| {
+                    let mut dist = vec![INF; self.n];
+                    dist[ini] = 0;
+                    let mut que = VecDeque::new();
+                    que.push_back(ini);
+                    while let Some(v0) = que.pop_front() {
+                        let d0 = dist[v0];
+                        let d1 = d0 + 1;
+                        for &(v1, _) in self.g[v0].iter() {
+                            if dist[v1].chmin(d1) {
+                                que.push_back(v1);
+                            }
+                        }
+                    }
+                    dist
+                })
+                .collect::<Vec<_>>();
+            let ecnt = {
+                let mut ecnt = vec![0; self.m];
+                let mut now_v = 0;
+                for &tgt in self.tgts.iter() {
+                    while now_v != tgt {
+                        let mut nxt_v = 0;
+                        let mut nxt_ei = 0;
+                        let mut nxt_dist = None;
+                        for &(nv, ei) in self.g[now_v].iter() {
+                            if nxt_dist.chmin((dist[tgt][nv], Reverse(ecnt[ei]))) {
+                                nxt_v = nv;
+                                nxt_ei = ei;
+                            }
+                        }
+                        now_v = nxt_v;
+                        ecnt[nxt_ei] += 1;
+                    }
+                }
+                let mut ecnt = ecnt.into_iter().enumerate().collect::<Vec<_>>();
+                ecnt.sort_by_cached_key(|&(_ei, ecnt)| Reverse(ecnt));
+                ecnt
+            };
+            let mut uf = UnionFind::new(self.n);
+            {
+                for (ei, ecnt) in ecnt {
+                    if ecnt <= 1 {
+                        break;
+                    }
+                    let (a, b) = self.es[ei];
+                    if uf.same(a, b) {
+                        continue;
+                    }
+                    if uf.group_size(a) + uf.group_size(b) > self.sig_len {
+                        continue;
+                    }
+                    uf.unite(a, b);
+                }
+            }
+            let mut vs = (0..self.n).collect::<Vec<_>>();
+            vs.sort_by(|&a, &b| {
+                let (x, y) = self.xy[a];
+                let da = (((x - 500).pow(2) + (y - 500).pow(2)) as f32).sqrt();
+                let (x, y) = self.xy[b];
+                let db = (((x - 500).pow(2) + (y - 500).pow(2)) as f32).sqrt();
+                da.partial_cmp(&db).unwrap()
+            });
+            for (oi, &ov) in vs.iter().enumerate() {
+                for &iv in vs.iter().take(oi) {
+                    if !self.g[ov].iter().any(|(nv, _)| nv == &iv) {
+                        continue;
+                    }
+                    if uf.group_size(ov) + uf.group_size(iv) > self.sig_len {
+                        continue;
+                    }
+                    uf.unite(iv, ov);
+                }
+            }
+            debug_assert!((0..self.n).all(|v| uf.group_size(v) <= self.sig_len));
+            uf
         }
     }
 }
