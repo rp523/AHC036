@@ -6478,7 +6478,7 @@ mod solver2 {
         use super::*;
         pub struct Comm {
             dict: Vec<usize>,
-            root_to_i0ln: Vec<(usize, usize)>,
+            root_to_i0ln: Vec<Vec<(usize, usize)>>,
             ans: Vec<String>,
             score: usize,
             // debug
@@ -6487,24 +6487,32 @@ mod solver2 {
             now_v: usize,
         }
         impl Comm {
-            pub fn new(n: usize, dict_len: usize, uf: &mut UnionFind) -> Self {
-                let mut subs = vec![vec![]; n];
-                for v in 0..n {
-                    subs[uf.root(v)].push(v);
-                }
+            pub fn new(n: usize, dict_len: usize, ufs: &mut [UnionFind]) -> Self {
+                let h = ufs.len();
                 let mut dict = Vec::with_capacity(dict_len);
-                let mut root_to_i0ln = vec![(INF, INF); n];
-                subs.into_iter().enumerate().for_each(|(rv, subs)| {
-                    if uf.root(rv) == rv {
-                        root_to_i0ln[rv] = (dict.len(), subs.len());
-                        subs.into_iter().for_each(|v| {
-                            dict.push(v);
-                        })
+                let mut root_to_i0ln = vec![vec![(INF, INF); n]; h];
+                for y in 0..h {
+                    let uf = &mut ufs[y];
+                    let root_to_i0ln = &mut root_to_i0ln[y];
+                    let mut subs = vec![vec![]; n];
+                    for v in 0..n {
+                        subs[uf.root(v)].push(v);
                     }
-                });
+                    subs.into_iter().enumerate().for_each(|(rv, subs)| {
+                        if uf.root(rv) == rv {
+                            if y == 0 || subs.len() > 1 {
+                                root_to_i0ln[rv] = (dict.len(), subs.len());
+                                subs.into_iter().for_each(|v| {
+                                    dict.push(v);
+                                })
+                            }
+                        }
+                    });
+                }
                 while dict.len() < dict_len {
                     dict.push(0);
                 }
+                debug_assert!(dict.len() <= dict_len);
                 Self {
                     dict,
                     root_to_i0ln,
@@ -6515,8 +6523,8 @@ mod solver2 {
                     now_v: 0,
                 }
             }
-            pub fn set_sig(&mut self, rv: usize) {
-                let (i0, ln) = self.root_to_i0ln[rv];
+            pub fn set_sig(&mut self, y: usize, rv: usize) {
+                let (i0, ln) = self.root_to_i0ln[y][rv];
                 debug_assert!(i0 != INF && ln != INF);
                 self.ans.push(format!("s {} {} 0", ln, i0));
                 self.score += 1;
@@ -6608,62 +6616,101 @@ mod solver2 {
                 hash,
             }
         }
-        fn root_graph(
-            g: &[Vec<(usize, usize)>],
-            es: &[(usize, usize)],
-            uf: &mut UnionFind,
-        ) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
-            let n = g.len();
-
-            let rg = {
-                let mut rg = vec![Set::new(); n];
-                for &(a, b) in es.iter() {
-                    let ra = uf.root(a);
-                    let rb = uf.root(b);
-                    rg[ra].insert(rb);
-                    rg[rb].insert(ra);
-                }
-                rg.into_iter()
-                    .map(|rvs| rvs.into_iter().collect::<Vec<_>>())
-                    .collect::<Vec<_>>()
-            };
-            let rdist = (0..n)
-                .map(|ini| -> Vec<usize> {
-                    let mut rdist = vec![INF; n];
-                    let rini = uf.root(ini);
-                    if ini != rini {
-                        return rdist;
-                    }
-                    rdist[rini] = 0;
-                    let mut que = VecDeque::new();
-                    que.push_back(rini);
-                    while let Some(v0) = que.pop_front() {
-                        let d0 = rdist[v0];
-                        let d1 = d0 + 1;
-                        for v1 in rg[v0].iter().copied() {
-                            if rdist[v1].chmin(d1) {
-                                que.push_back(v1);
-                            }
-                        }
-                    }
-                    rdist
-                })
-                .collect::<Vec<_>>();
-            (rg, rdist)
-        }
-        fn motion_parts(
-            g: &[Vec<(usize, usize)>],
-            uf: &mut UnionFind,
-        ) -> (Vec<Vec<(usize, usize)>>, Vec<Vec<Vec<usize>>>) {
-            let n = g.len();
-            let mut rcon = vec![vec![(INF, INF); n]; n];
-            for a in 0..n {
-                let ra = uf.root(a);
-                for (b, _) in g[a].iter().copied() {
-                    let rb = uf.root(b);
-                    rcon[ra][rb] = (a, b);
+        fn build_root_graph(&self, ufs: &mut [UnionFind]) -> Vec<Vec<Vec<(usize, usize)>>> {
+            let h = ufs.len();
+            let n = self.g.len();
+            let mut rg = vec![vec![Set::new(); n]; h];
+            // same level
+            for y in 0..h {
+                for &(v0, v1) in self.es.iter() {
+                    let r0 = ufs[y].root(v0);
+                    let r1 = ufs[y].root(v1);
+                    rg[y][r0].insert((y, r1));
+                    rg[y][r1].insert((y, r0));
                 }
             }
+            // different level
+            for y0 in 0..h {
+                for y1 in y0 + 1..h {
+                    for v in 0..n {
+                        let r0 = ufs[y0].root(v);
+                        let r1 = ufs[y1].root(v);
+                        rg[y0][r0].insert((y1, r1));
+                        rg[y1][r1].insert((y0, r0));
+                    }
+                }
+            }
+            rg.into_iter()
+                .map(|rvs| {
+                    rvs.into_iter()
+                        .map(|rvs| rvs.into_iter().collect::<Vec<_>>())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        }
+        fn build_root_dist(
+            &self,
+            rg: &[Vec<Vec<(usize, usize)>>],
+            ufs: &mut [UnionFind],
+        ) -> Vec<Vec<Vec<Vec<usize>>>> {
+            let h = ufs.len();
+            let n = self.g.len();
+            (0..h)
+                .map(|ini_y| {
+                    (0..n)
+                        .map(|ini_v| -> Vec<Vec<usize>> {
+                            let mut rdist = vec![vec![INF; n]; h];
+                            let ini_rv = ufs[ini_y].root(ini_v);
+                            if ini_v != ini_rv {
+                                return rdist;
+                            }
+                            rdist[ini_y][ini_rv] = 0;
+                            let mut que = VecDeque::new();
+                            que.push_back((ini_y, ini_rv));
+                            while let Some((y0, rv0)) = que.pop_front() {
+                                let d0 = rdist[y0][rv0];
+                                let d1 = d0 + 1;
+                                for (y1, rv1) in rg[y0][rv0].iter().copied() {
+                                    if rdist[y1][rv1].chmin(d1) {
+                                        que.push_back((y1, rv1));
+                                    }
+                                }
+                            }
+                            rdist
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        }
+        fn build_bridge(&self, ufs: &mut [UnionFind]) -> Vec<Vec<Vec<Vec<(usize, usize)>>>> {
+            let h = ufs.len();
+            let n = self.g.len();
+            let mut rcon = vec![vec![vec![vec![(INF, INF); n]; h]; n]; h];
+            // same level
+            for y in 0..h {
+                for &(v0, v1) in self.es.iter() {
+                    let r0 = ufs[y].root(v0);
+                    let r1 = ufs[y].root(v1);
+                    rcon[y][r0][y][r1] = (v0, v1);
+                    rcon[y][r1][y][r0] = (v1, v0);
+                }
+            }
+            // different level
+            for y0 in 0..h {
+                for y1 in y0 + 1..h {
+                    for v in 0..n {
+                        let r0 = ufs[y0].root(v);
+                        let r1 = ufs[y1].root(v);
+                        rcon[y0][r0][y1][r1] = (v, v);
+                        rcon[y1][r1][y0][r0] = (v, v);
+                    }
+                }
+            }
+            rcon
+        }
+        fn build_inner_path(&self, ufs: &mut [UnionFind]) -> Vec<Vec<Vec<Vec<usize>>>> {
+            let h = ufs.len();
+            let n = self.g.len();
             fn dfs(
                 v: usize,
                 t: usize,
@@ -6692,80 +6739,143 @@ mod solver2 {
                 }
                 false
             }
-            let mut inner_path = vec![vec![vec![]; n]; n];
-            for v in 0..n {
-                let rv = uf.root(v);
-                if v != rv {
-                    dfs(v, rv, &g, &mut Set::new(), uf, &mut inner_path[v][rv]);
-                    inner_path[rv][v] = inner_path[v][rv]
-                        .iter()
-                        .rev()
-                        .skip(1)
-                        .copied()
-                        .chain(vec![v].into_iter())
-                        .collect::<Vec<_>>();
+            (0..h)
+                .map(|y| {
+                    let mut inner_path = vec![vec![vec![]; n]; n];
+                    let uf = &mut ufs[y];
+                    for v in 0..n {
+                        let rv = uf.root(v);
+                        if v != rv {
+                            dfs(v, rv, &self.g, &mut Set::new(), uf, &mut inner_path[v][rv]);
+                            inner_path[rv][v] = inner_path[v][rv]
+                                .iter()
+                                .rev()
+                                .skip(1)
+                                .copied()
+                                .chain(vec![v].into_iter())
+                                .collect::<Vec<_>>();
+                        }
+                    }
+                    inner_path
+                })
+                .collect::<Vec<_>>()
+        }
+        fn plan_heights(
+            &self,
+            rdist: &[Vec<Vec<Vec<usize>>>],
+            ufs: &mut [UnionFind],
+        ) -> VecDeque<usize> {
+            let h = rdist.len();
+            let mut dp = vec![vec![INF; h]; self.tgts.len() + 1];
+            let mut pre = vec![vec![INF; h]; self.tgts.len() + 1];
+            for y in 0..h {
+                dp[0][y] = 0;
+            }
+            for (ti0, &tgt1) in self.tgts.iter().enumerate() {
+                let ti1 = ti0 + 1;
+                let tgt0 = if ti0 == 0 { 0 } else { self.tgts[ti0 - 1] };
+                for y0 in 0..h {
+                    let r0 = ufs[y0].root(tgt0);
+                    let org = dp[ti0][y0];
+                    for y1 in 0..h {
+                        let r1 = ufs[y1].root(tgt1);
+                        let delta = rdist[y0][r0][y1][r1];
+                        if delta == INF {
+                            continue;
+                        }
+                        let nxt = org + delta;
+                        if dp[ti1][y1].chmin(nxt) {
+                            pre[ti1][y1] = y0;
+                        }
+                    }
                 }
             }
-            (rcon, inner_path)
+            let mut ynow = 0;
+            let mut ev = None;
+            for y in 0..h {
+                if ev.chmin(dp[self.tgts.len()][y]) {
+                    ynow = y;
+                }
+            }
+            let mut ys = VecDeque::with_capacity(self.tgts.len() + 1);
+            for ti in (1..=self.tgts.len()).rev() {
+                ys.push_front(ynow);
+                let ypre = pre[ti][ynow];
+                ynow = ypre;
+            }
+            ys.push_front(ynow);
+            ys
         }
         pub fn solve(&self) {
-            let mut uf = self.split_into_subsets();
-            let (rg, rdist) = Self::root_graph(&self.g, &self.es, &mut uf);
-            let (bridge, parts) = Self::motion_parts(&self.g, &mut uf);
-            let mut comm = Comm::new(self.n, self.dict_len, &mut uf);
+            let mut ufs = self.split_into_subsets();
+            let rg = self.build_root_graph(&mut ufs);
+            let rdist = self.build_root_dist(&rg, &mut ufs);
+            let bridge = self.build_bridge(&mut ufs);
+            let parts = self.build_inner_path(&mut ufs);
+            let mut comm = Comm::new(self.n, self.dict_len, &mut ufs);
+            let mut tgt_ys = self.plan_heights(&rdist, &mut ufs);
             // main
             let mut now_v = 0;
-            let mut now_r = uf.root(now_v);
-            comm.set_sig(now_r);
-            for &tgt in self.tgts.iter() {
+            let mut now_y = tgt_ys.pop_front().unwrap();
+            let mut now_r = ufs[now_y].root(now_v);
+            comm.set_sig(now_y, now_r);
+            for (&tgt_v, tgt_y) in self.tgts.iter().zip(tgt_ys.into_iter()) {
                 // to center
-                for &nv in parts[now_v][now_r].iter() {
+                for &nv in parts[now_y][now_v][now_r].iter() {
                     comm.motion(nv);
                 }
                 now_v = now_r;
                 // center to another center
-                while now_r != uf.root(tgt) {
+                let tgt_r = ufs[tgt_y].root(tgt_v);
+                while (now_y, now_r) != (tgt_y, tgt_r) {
                     // now at root center
-                    debug_assert!(uf.root(now_v) == now_v);
+                    debug_assert!(ufs[now_y].root(now_v) == now_v);
 
                     // plan next root
-                    let mut nxt_r = 0;
-                    let mut nxt_r_dist = INF;
-                    for &nr in rg[now_r].iter() {
-                        if nxt_r_dist.chmin(rdist[uf.root(tgt)][nr]) {
-                            nxt_r = nr;
+                    let (nxt_y, nxt_r) = {
+                        let mut nxt_y = 0;
+                        let mut nxt_r = 0;
+                        let mut nxt_dist = INF;
+                        for &(ny, nr) in rg[now_y][now_r].iter() {
+                            if nxt_dist.chmin(rdist[tgt_y][tgt_r][ny][nr]) {
+                                nxt_y = ny;
+                                nxt_r = nr;
+                            }
                         }
-                    }
-                    let nxt_r = nxt_r;
-                    debug_assert_ne!(now_r, nxt_r);
+                        (nxt_y, nxt_r)
+                    };
+                    debug_assert_ne!((now_y, now_r), (nxt_y, nxt_r));
                     // plan bridge
-                    let (b0, b1) = bridge[now_r][nxt_r];
-                    debug_assert!(uf.root(b0) == now_r);
-                    debug_assert!(uf.root(b1) == nxt_r);
+                    let (b0, b1) = bridge[now_y][now_r][nxt_y][nxt_r];
+                    debug_assert!(ufs[now_y].root(b0) == now_r);
+                    debug_assert!(ufs[nxt_y].root(b1) == nxt_r);
                     // move to bridge entry
-                    for &nv in parts[now_v][b0].iter() {
+                    for &nv in parts[now_y][now_v][b0].iter() {
                         comm.motion(nv);
                     }
                     // transition to next root
-                    comm.set_sig(nxt_r);
-                    comm.motion(b1);
+                    comm.set_sig(nxt_y, nxt_r);
+                    if b0 != b1 {
+                        comm.motion(b1);
+                    }
                     now_v = b1;
+                    now_y = nxt_y;
                     now_r = nxt_r;
                     // move to next center
-                    for &nv in parts[now_v][now_r].iter() {
+                    for &nv in parts[now_y][now_v][now_r].iter() {
                         comm.motion(nv);
                     }
                     now_v = now_r;
                 }
                 // to tgt
-                for &nv in parts[now_v][tgt].iter() {
+                for &nv in parts[now_y][now_v][tgt_v].iter() {
                     comm.motion(nv);
                 }
-                now_v = tgt;
+                now_v = tgt_v;
             }
             comm.answer();
         }
-        fn split_into_subsets(&self) -> UnionFind {
+        fn split_into_subsets(&self) -> Vec<UnionFind> {
             let dist = (0..self.n)
                 .map(|ini| {
                     let mut dist = vec![INF; self.n];
@@ -6804,7 +6914,7 @@ mod solver2 {
                 }
                 ecnt
             };
-            let mut uf = UnionFind::new(self.n);
+            let mut uf0 = UnionFind::new(self.n);
             {
                 let mut que = BinaryHeap::new();
                 for ei in 0..self.m {
@@ -6815,13 +6925,13 @@ mod solver2 {
                         break;
                     }
                     let (a, b) = self.es[ei];
-                    if uf.same(a, b) {
+                    if uf0.same(a, b) {
                         continue;
                     }
-                    if uf.group_size(a) + uf.group_size(b) > self.sig_len {
+                    if uf0.group_size(a) + uf0.group_size(b) > self.sig_len {
                         continue;
                     }
-                    uf.unite(a, b);
+                    uf0.unite(a, b);
                 }
             }
             let mut vs = (0..self.n).collect::<Vec<_>>();
@@ -6837,14 +6947,14 @@ mod solver2 {
                     if !self.g[ov].iter().any(|(nv, _)| nv == &iv) {
                         continue;
                     }
-                    if uf.group_size(ov) + uf.group_size(iv) > self.sig_len {
+                    if uf0.group_size(ov) + uf0.group_size(iv) > self.sig_len {
                         continue;
                     }
-                    uf.unite(iv, ov);
+                    uf0.unite(iv, ov);
                 }
             }
-            debug_assert!((0..self.n).all(|v| uf.group_size(v) <= self.sig_len));
-            uf
+            debug_assert!((0..self.n).all(|v| uf0.group_size(v) <= self.sig_len));
+            vec![uf0]
         }
     }
 }
