@@ -6989,7 +6989,7 @@ mod solver2 {
                 for ei in 0..self.m {
                     que.push((ecnt[ei], ei));
                 }
-                while let Some((ecnt, ei)) = que.pop() {
+                while let Some((_ecnt, ei)) = que.pop() {
                     let (a, b) = self.es[ei];
                     if ufs.iter_mut().any(|uf| uf.same(a, b)) {
                         continue;
