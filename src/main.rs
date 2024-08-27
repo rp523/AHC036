@@ -6482,7 +6482,6 @@ mod solver2 {
             ans: Vec<String>,
             score: usize,
             // debug
-            blues: Vec<usize>,
             sig_state: Vec<bool>,
             now_v: usize,
         }
@@ -6491,7 +6490,7 @@ mod solver2 {
                 let h = ufs.len();
                 let mut dict = Vec::with_capacity(dict_len);
                 let mut root_to_i0ln = vec![vec![(INF, INF); n]; h];
-                let mut still_not_shown = (0..n).collect::<Set<_>>();
+                let mut v_is_shown_at = Map::new();
                 for y in 0..h {
                     let uf = &mut ufs[y];
                     let root_to_i0ln = &mut root_to_i0ln[y];
@@ -6503,17 +6502,30 @@ mod solver2 {
                         if uf.root(rv) == rv && subs.len() > 1 {
                             root_to_i0ln[rv] = (dict.len(), subs.len());
                             subs.into_iter().for_each(|v| {
-                                still_not_shown.remove(&v);
+                                v_is_shown_at.insert(v, dict.len());
                                 dict.push(v);
                             })
                         }
                     });
                 }
-                debug_assert_eq!(still_not_shown.len() + dict.len(), n);
-                for v in still_not_shown {
-                    root_to_i0ln[0][v] = (dict.len(), 1);
-                    dict.push(v);
+                for v in 0..n {
+                    if !v_is_shown_at.contains_key(&v) {
+                        root_to_i0ln.iter_mut().for_each(|root_to_i0ln| {
+                            root_to_i0ln[v] = (dict.len(), 1);
+                        });
+                        v_is_shown_at.insert(v, dict.len());
+                        dict.push(v);
+                    }
                 }
+                debug_assert!(v_is_shown_at.len() == n);
+                for (y, uf) in ufs.iter_mut().enumerate() {
+                    for v in 0..n {
+                        if uf.group_size(v) == 1 {
+                            root_to_i0ln[y][v] = (v_is_shown_at[&v], 1);
+                        }
+                    }
+                }
+                debug_assert!(dict.len() <= dict_len);
                 while dict.len() < dict_len {
                     dict.push(0);
                 }
@@ -6523,7 +6535,6 @@ mod solver2 {
                     root_to_i0ln,
                     ans: vec![],
                     score: 0,
-                    blues: vec![],
                     sig_state: vec![false; n],
                     now_v: 0,
                 }
@@ -6535,13 +6546,12 @@ mod solver2 {
                 self.score += 1;
                 #[cfg(debug_assertions)]
                 {
-                    while let Some(v) = self.blues.pop() {
-                        self.sig_state[v] = false;
-                    }
+                    self.sig_state.iter_mut().for_each(|x| {
+                        *x = false;
+                    });
                     for i in (i0..).take(ln) {
                         let v = self.dict[i];
                         self.sig_state[v] = true;
-                        self.blues.push(v);
                     }
                 }
             }
@@ -6630,8 +6640,10 @@ mod solver2 {
                 for &(v0, v1) in self.es.iter() {
                     let r0 = ufs[y].root(v0);
                     let r1 = ufs[y].root(v1);
-                    rg[y][r0].insert((y, r1));
-                    rg[y][r1].insert((y, r0));
+                    if r0 != r1 {
+                        rg[y][r0].insert((y, r1));
+                        rg[y][r1].insert((y, r0));
+                    }
                 }
             }
             // different level
@@ -6696,8 +6708,10 @@ mod solver2 {
                 for &(v0, v1) in self.es.iter() {
                     let r0 = ufs[y].root(v0);
                     let r1 = ufs[y].root(v1);
-                    rcon[y][r0][y][r1] = (v0, v1);
-                    rcon[y][r1][y][r0] = (v1, v0);
+                    if r0 != r1 {
+                        rcon[y][r0][y][r1] = (v0, v1);
+                        rcon[y][r1][y][r0] = (v1, v0);
+                    }
                 }
             }
             // different level
@@ -6919,26 +6933,42 @@ mod solver2 {
                 }
                 ecnt
             };
-            let mut uf0 = UnionFind::new(self.n);
+            let mut ufs = vec![UnionFind::new(self.n)];
+            let mut checker = UniteChecker::new(self.n, self.dict_len);
             {
                 let mut que = BinaryHeap::new();
                 for ei in 0..self.m {
                     que.push((ecnt[ei], ei));
                 }
                 while let Some((ecnt, ei)) = que.pop() {
-                    if ecnt <= 1 {
+                    let (a, b) = self.es[ei];
+                    if ufs.iter_mut().any(|uf| uf.same(a, b)) {
+                        continue;
+                    }
+                    let mut con = false;
+                    for (y, uf) in ufs.iter_mut().enumerate() {
+                        if uf.group_size(a) + uf.group_size(b) > self.sig_len {
+                            continue;
+                        }
+                        if !checker.can_unite(y, a, b) {
+                            continue;
+                        }
+                        checker.unite(y, a, b);
+                        uf.unite(a, b);
+                        con = true;
                         break;
                     }
-                    let (a, b) = self.es[ei];
-                    if uf0.same(a, b) {
-                        continue;
+                    if !con {
+                        if !checker.can_unite(ufs.len(), a, b) {
+                            continue;
+                        }
+                        checker.unite(ufs.len(), a, b);
+                        ufs.push(UnionFind::new(self.n));
+                        ufs.iter_mut().next_back().unwrap().unite(a, b);
                     }
-                    if uf0.group_size(a) + uf0.group_size(b) > self.sig_len {
-                        continue;
-                    }
-                    uf0.unite(a, b);
                 }
             }
+            /*
             let mut vs = (0..self.n).collect::<Vec<_>>();
             vs.sort_by(|&a, &b| {
                 let (x, y) = self.xy[a];
@@ -6958,8 +6988,60 @@ mod solver2 {
                     uf0.unite(iv, ov);
                 }
             }
-            debug_assert!((0..self.n).all(|v| uf0.group_size(v) <= self.sig_len));
-            vec![uf0]
+             */
+            debug_assert!(ufs
+                .iter_mut()
+                .all(|uf| (0..self.n).all(|v| uf.group_size(v) <= self.sig_len)));
+            ufs
+        }
+    }
+    struct UniteChecker {
+        not_used: Set<usize>,
+        used: Vec<Set<usize>>,
+        used_num: usize,
+        dict_len: usize,
+    }
+    impl UniteChecker {
+        fn new(n: usize, dict_len: usize) -> Self {
+            Self {
+                not_used: (0..n).collect::<Set<_>>(),
+                used: vec![Set::new()],
+                used_num: 0,
+                dict_len,
+            }
+        }
+        fn can_unite(&mut self, y: usize, a: usize, b: usize) -> bool {
+            while self.used.len() <= y {
+                self.used.push(Set::new());
+            }
+            let mut used_num_nxt = self.used_num;
+            let mut not_used_len_nxt = self.not_used.len();
+            [a, b].iter().for_each(|&v| {
+                if !self.used[y].contains(&v) {
+                    used_num_nxt += 1;
+                }
+                if self.not_used.contains(&v) {
+                    not_used_len_nxt -= 1;
+                }
+            });
+            used_num_nxt + not_used_len_nxt <= self.dict_len
+        }
+        fn unite(&mut self, y: usize, a: usize, b: usize) {
+            let mut used_num_nxt = self.used_num;
+            [a, b].iter().for_each(|&v| {
+                if !self.used[y].contains(&v) {
+                    used_num_nxt += 1;
+                }
+            });
+            self.used[y].insert(a);
+            self.used[y].insert(b);
+            self.used_num = used_num_nxt;
+            debug_assert_eq!(
+                used_num_nxt,
+                self.used.iter().map(|used| used.len()).sum::<usize>()
+            );
+            self.not_used.remove(&a);
+            self.not_used.remove(&b);
         }
     }
 }
