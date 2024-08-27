@@ -6982,40 +6982,61 @@ mod solver2 {
                 }
                 ecnt
             };
-            let mut ufs = vec![UnionFind::new(self.n)];
+            let mut ufs = vec![UnionFind::new(self.n); 2];
             let mut checker = UniteChecker::new(self.n, self.dict_len);
-            {
-                let mut que = BinaryHeap::new();
-                for ei in 0..self.m {
-                    que.push((ecnt[ei], ei));
-                }
-                while let Some((_ecnt, ei)) = que.pop() {
-                    let (a, b) = self.es[ei];
+            loop {
+                // measure impact
+                let mut impacts = Map::new();
+                let mut local = Map::new();
+                let sort2 = |a: usize, b: usize| -> (usize, usize) {
+                    if a < b {
+                        (a, b)
+                    } else {
+                        (b, a)
+                    }
+                };
+                for (ei, (&ecnt, &(a, b))) in ecnt.iter().zip(self.es.iter()).enumerate() {
                     if ufs.iter_mut().any(|uf| uf.same(a, b)) {
                         continue;
                     }
-                    let mut con = false;
-                    for (y, uf) in ufs.iter_mut().enumerate() {
-                        if uf.group_size(a) + uf.group_size(b) > self.sig_len {
-                            continue;
+                    ufs.iter_mut().enumerate().for_each(|(y, uf)| {
+                        debug_assert!(!uf.same(a, b));
+                        if uf.group_size(a) + uf.group_size(b) <= self.sig_len
+                            && checker.can_unite(y, a, b)
+                        {
+                            let (ra, rb) = sort2(uf.root(a), uf.root(b));
+                            debug_assert!(!uf.same(ra, rb));
+                            let key = (y, (ra, rb));
+                            *impacts.entry(key).or_insert(0) += ecnt;
+                            local.entry(key).or_insert((0, 0)).chmax((ecnt, ei));
                         }
-                        if !checker.can_unite(y, a, b) {
-                            continue;
-                        }
-                        checker.unite(y, a, b);
-                        uf.unite(a, b);
-                        con = true;
-                        break;
-                    }
-                    if !con {
-                        if !checker.can_unite(ufs.len(), a, b) {
-                            continue;
-                        }
-                        checker.unite(ufs.len(), a, b);
-                        ufs.push(UnionFind::new(self.n));
-                        ufs.iter_mut().next_back().unwrap().unite(a, b);
+                    });
+                }
+                debug_assert!(impacts
+                    .iter()
+                    .all(|(&(y, (ra, rb)), _impact)| !ufs[y].same(ra, rb)));
+                // select best
+                let mut best_ev = None;
+                let mut best_uni = (0, 0);
+                for ((y, (ra, rb)), impact) in impacts {
+                    debug_assert!(ufs[y].group_size(ra) + ufs[y].group_size(rb) <= self.sig_len);
+                    debug_assert!(!ufs[y].same(ra, rb));
+                    if best_ev.chmax(impact) {
+                        let (_, ei) = local[&(y, (ra, rb))];
+                        let (a, b) = self.es[ei];
+                        debug_assert!(ufs.iter_mut().all(|uf| !uf.same(a, b)));
+                        debug_assert!(checker.can_unite(y, a, b));
+                        best_uni = (y, ei);
                     }
                 }
+
+                if best_ev.is_none() {
+                    break;
+                }
+                let (y, ei) = best_uni;
+                let (a, b) = self.es[ei];
+                checker.unite(y, a, b);
+                ufs[y].unite(a, b);
             }
             /*
             let mut vs = (0..self.n).collect::<Vec<_>>();
