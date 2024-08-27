@@ -6491,6 +6491,7 @@ mod solver2 {
                 let h = ufs.len();
                 let mut dict = Vec::with_capacity(dict_len);
                 let mut root_to_i0ln = vec![vec![(INF, INF); n]; h];
+                let mut still_not_shown = (0..n).collect::<Set<_>>();
                 for y in 0..h {
                     let uf = &mut ufs[y];
                     let root_to_i0ln = &mut root_to_i0ln[y];
@@ -6499,15 +6500,19 @@ mod solver2 {
                         subs[uf.root(v)].push(v);
                     }
                     subs.into_iter().enumerate().for_each(|(rv, subs)| {
-                        if uf.root(rv) == rv {
-                            if y == 0 || subs.len() > 1 {
-                                root_to_i0ln[rv] = (dict.len(), subs.len());
-                                subs.into_iter().for_each(|v| {
-                                    dict.push(v);
-                                })
-                            }
+                        if uf.root(rv) == rv && subs.len() > 1 {
+                            root_to_i0ln[rv] = (dict.len(), subs.len());
+                            subs.into_iter().for_each(|v| {
+                                still_not_shown.remove(&v);
+                                dict.push(v);
+                            })
                         }
                     });
+                }
+                debug_assert_eq!(still_not_shown.len() + dict.len(), n);
+                for v in still_not_shown {
+                    root_to_i0ln[0][v] = (dict.len(), 1);
+                    dict.push(v);
                 }
                 while dict.len() < dict_len {
                     dict.push(0);
