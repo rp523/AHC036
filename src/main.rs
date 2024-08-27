@@ -6579,6 +6579,55 @@ mod solver2 {
         }
     }
     use comm::Comm;
+    struct UniteChecker {
+        not_used: Set<usize>,
+        used: Vec<Set<usize>>,
+        used_num: usize,
+        dict_len: usize,
+    }
+    impl UniteChecker {
+        fn new(n: usize, dict_len: usize) -> Self {
+            Self {
+                not_used: (0..n).collect::<Set<_>>(),
+                used: vec![Set::new()],
+                used_num: 0,
+                dict_len,
+            }
+        }
+        fn can_unite(&mut self, y: usize, a: usize, b: usize) -> bool {
+            while self.used.len() <= y {
+                self.used.push(Set::new());
+            }
+            let mut used_num_nxt = self.used_num;
+            let mut not_used_len_nxt = self.not_used.len();
+            [a, b].iter().for_each(|&v| {
+                if !self.used[y].contains(&v) {
+                    used_num_nxt += 1;
+                }
+                if self.not_used.contains(&v) {
+                    not_used_len_nxt -= 1;
+                }
+            });
+            used_num_nxt + not_used_len_nxt <= self.dict_len
+        }
+        fn unite(&mut self, y: usize, a: usize, b: usize) {
+            let mut used_num_nxt = self.used_num;
+            [a, b].iter().for_each(|&v| {
+                if !self.used[y].contains(&v) {
+                    used_num_nxt += 1;
+                }
+            });
+            self.used[y].insert(a);
+            self.used[y].insert(b);
+            self.used_num = used_num_nxt;
+            debug_assert_eq!(
+                used_num_nxt,
+                self.used.iter().map(|used| used.len()).sum::<usize>()
+            );
+            self.not_used.remove(&a);
+            self.not_used.remove(&b);
+        }
+    }
     pub struct Solver {
         t0: Instant,
         n: usize,
@@ -6993,55 +7042,6 @@ mod solver2 {
                 .iter_mut()
                 .all(|uf| (0..self.n).all(|v| uf.group_size(v) <= self.sig_len)));
             ufs
-        }
-    }
-    struct UniteChecker {
-        not_used: Set<usize>,
-        used: Vec<Set<usize>>,
-        used_num: usize,
-        dict_len: usize,
-    }
-    impl UniteChecker {
-        fn new(n: usize, dict_len: usize) -> Self {
-            Self {
-                not_used: (0..n).collect::<Set<_>>(),
-                used: vec![Set::new()],
-                used_num: 0,
-                dict_len,
-            }
-        }
-        fn can_unite(&mut self, y: usize, a: usize, b: usize) -> bool {
-            while self.used.len() <= y {
-                self.used.push(Set::new());
-            }
-            let mut used_num_nxt = self.used_num;
-            let mut not_used_len_nxt = self.not_used.len();
-            [a, b].iter().for_each(|&v| {
-                if !self.used[y].contains(&v) {
-                    used_num_nxt += 1;
-                }
-                if self.not_used.contains(&v) {
-                    not_used_len_nxt -= 1;
-                }
-            });
-            used_num_nxt + not_used_len_nxt <= self.dict_len
-        }
-        fn unite(&mut self, y: usize, a: usize, b: usize) {
-            let mut used_num_nxt = self.used_num;
-            [a, b].iter().for_each(|&v| {
-                if !self.used[y].contains(&v) {
-                    used_num_nxt += 1;
-                }
-            });
-            self.used[y].insert(a);
-            self.used[y].insert(b);
-            self.used_num = used_num_nxt;
-            debug_assert_eq!(
-                used_num_nxt,
-                self.used.iter().map(|used| used.len()).sum::<usize>()
-            );
-            self.not_used.remove(&a);
-            self.not_used.remove(&b);
         }
     }
 }
