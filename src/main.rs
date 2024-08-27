@@ -6876,61 +6876,58 @@ mod solver2 {
             comm.answer();
         }
         fn split_into_subsets(&self) -> Vec<UnionFind> {
-            let dist = (0..self.n)
-                .map(|ini| {
-                    let mut dist = vec![INF; self.n];
-                    dist[ini] = 0;
-                    let mut que = VecDeque::new();
-                    que.push_back(ini);
-                    while let Some(v0) = que.pop_front() {
-                        let d0 = dist[v0];
-                        let d1 = d0 + 1;
-                        for &(v1, _) in self.g[v0].iter() {
-                            if dist[v1].chmin(d1) {
-                                que.push_back(v1);
-                            }
-                        }
-                    }
-                    dist
-                })
-                .collect::<Vec<_>>();
-            let ecnt = {
-                let mut ecnt = vec![0; self.m];
-                let mut now_v = 0;
-                for &tgt in self.tgts.iter() {
-                    while now_v != tgt {
-                        let mut nxt_v = 0;
-                        let mut nxt_ei = 0;
-                        let mut nxt_dist = None;
-                        for &(nv, ei) in self.g[now_v].iter() {
-                            if nxt_dist.chmin((dist[tgt][nv], Reverse(ecnt[ei]))) {
-                                nxt_v = nv;
-                                nxt_ei = ei;
-                            }
-                        }
-                        now_v = nxt_v;
-                        ecnt[nxt_ei] += 1;
-                    }
-                }
-                ecnt
-            };
             let mut uf0 = UnionFind::new(self.n);
             {
-                let mut que = BinaryHeap::new();
-                for ei in 0..self.m {
-                    que.push((ecnt[ei], ei));
-                }
-                while let Some((ecnt, ei)) = que.pop() {
-                    if ecnt <= 1 {
+                loop {
+                    //eprintln!("{li}");
+                    let mut v = 0;
+                    let mut ecnt = vec![0; self.m];
+                    for &tgt in self.tgts.iter() {
+                        let mut que = VecDeque::new();
+                        que.push_back(v);
+                        let mut vis = vec![false; self.n];
+                        vis[v] = true;
+                        'bfs: while let Some(v0) = que.pop_front() {
+                            for &(v1, ei) in self.g[v0].iter() {
+                                if vis[v1] {
+                                    continue;
+                                }
+                                vis[v1] = true;
+                                if !uf0.same(v0, v1) {
+                                    ecnt[ei] += 1;
+                                }
+                                if v1 == tgt {
+                                    break 'bfs;
+                                }
+                                if !uf0.same(v0, v1) {
+                                    que.push_back(v1);
+                                } else {
+                                    que.push_front(v1);
+                                }
+                            }
+                        }
+                        v = tgt;
+                    }
+                    let mut max_ev = 0;
+                    let mut max_ab = (0, 0);
+                    for (ei, &(a, b)) in self.es.iter().enumerate() {
+                        let ev = ecnt[ei];
+                        if ev == 0 {
+                            continue;
+                        }
+                        debug_assert!(!uf0.same(a, b));
+                        if uf0.group_size(a) + uf0.group_size(b) <= self.sig_len {
+                            if max_ev.chmax(ev) {
+                                max_ab = (a, b);
+                            }
+                        }
+                    }
+                    if max_ev <= 1 {
                         break;
                     }
-                    let (a, b) = self.es[ei];
-                    if uf0.same(a, b) {
-                        continue;
-                    }
-                    if uf0.group_size(a) + uf0.group_size(b) > self.sig_len {
-                        continue;
-                    }
+                    let (a, b) = max_ab;
+                    debug_assert!(!uf0.same(a, b));
+                    debug_assert!(uf0.group_size(a) + uf0.group_size(b) <= self.sig_len);
                     uf0.unite(a, b);
                 }
             }
