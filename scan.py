@@ -17,6 +17,10 @@ def main():
         t = "release"
     shutil.copy(Path("target/{}/atcoder.exe".format(t)), scan_bin)
     assert(scan_bin.exists())
+    score_max = 0
+    score_max_i = 0
+    score_min = 99999999
+    score_min_i = 0
     score_sum = 0
     score_norm = 0
     with open("score1.csv", "w") as f:
@@ -30,7 +34,20 @@ def main():
             score = int(ret)
             score_sum += score
             score_norm += 1
-            print(i, score, "{}ms".format(int(1000 * (t1 - t0))), "ave", score_sum / score_norm)
+            if score_min > score:
+                score_min = score
+                score_min_i = i
+            if score_max < score:
+                score_max = score
+                score_max_i = i
+            print(
+                i,
+                score,
+                "{}ms".format(int(1000 * (t1 - t0))),
+                "ave {}".format(score_sum / score_norm),
+                "min {}({})".format(score_min, score_min_i),
+                "max {}({})".format(score_max, score_max_i),
+            )
             f.write("{}\n".format(score))
     print("ave", score_sum / score_norm)
 
