@@ -5969,505 +5969,6 @@ fn main() {
     solver2::Solver::new().solve();
 }
 
-mod solver {
-    use super::*;
-    type Map<K, V> = BTreeMap<K, V>;
-    type Set<T> = BTreeSet<T>;
-    type H = u128;
-    const INF: usize = 1usize << 60;
-
-    mod highway {
-        use super::*;
-        pub struct Highway {}
-        impl Highway {
-            pub fn gen_tour(
-                g: &[Vec<usize>],
-                tgts: &Vec<usize>,
-                rng: &mut ChaChaRng,
-            ) -> Vec<usize> {
-                let n = g.len();
-                let dist = (0..n)
-                    .map(|ini| -> Vec<usize> {
-                        let mut dist = vec![INF; n];
-                        dist[ini] = 0;
-                        let mut que = VecDeque::new();
-                        que.push_back(ini);
-                        while let Some(v0) = que.pop_front() {
-                            let d0 = dist[v0];
-                            let d1 = d0 + 1;
-                            for v1 in g[v0].iter().copied() {
-                                if dist[v1].chmin(d1) {
-                                    que.push_back(v1);
-                                }
-                            }
-                        }
-                        dist
-                    })
-                    .collect::<Vec<_>>();
-                const HUB: usize = 60;
-                let hubs = {
-                    let mut local_tgts = tgts.clone();
-                    let mut ev = INF;
-                    let mut best_hubs = vec![];
-                    for _ in 0..1000 {
-                        local_tgts.shuffle(rng);
-                        let hubs = local_tgts.iter().take(HUB).copied().collect::<Vec<_>>();
-                        let mut hub_dist_max = 0;
-                        for &sv in tgts.iter().skip(HUB) {
-                            let to_hub_dist = hubs.iter().map(|&hv| dist[hv][sv]).min().unwrap();
-                            hub_dist_max.chmax(to_hub_dist);
-                        }
-                        if ev.chmin(hub_dist_max) {
-                            best_hubs = hubs;
-                        }
-                    }
-                    best_hubs
-                };
-                // MST
-                let mst = {
-                    let mut es = vec![];
-                    for (hi0, &hv0) in hubs.iter().enumerate() {
-                        for &hv1 in hubs.iter().skip(hi0 + 1) {
-                            es.push((dist[hv0][hv1], (hv0, hv1)));
-                        }
-                    }
-                    es.sort();
-                    let mut uf = UnionFind::new(n);
-                    let mut mst = vec![vec![]; n];
-                    for (_, (a, b)) in es {
-                        if uf.same(a, b) {
-                            continue;
-                        }
-                        let mut v = a;
-                        while v != b {
-                            let mut ndist = INF;
-                            let mut to = 0;
-                            for &nv in g[v].iter() {
-                                if ndist.chmin(dist[b][nv]) {
-                                    to = nv;
-                                }
-                            }
-                            mst[v].push(to);
-                            mst[to].push(v);
-                            uf.unite(v, to);
-                            v = to;
-                        }
-                    }
-                    mst
-                };
-                // near hub
-                let near_hub = {
-                    let mut near_hub = vec![0; n];
-                    let mut near_hub_dist = vec![INF; n];
-                    for &hv in hubs.iter() {
-                        let mut que = VecDeque::new();
-                        que.push_back(hv);
-                        near_hub_dist[hv] = 0;
-                        near_hub[hv] = hv;
-                        while let Some(v) = que.pop_front() {
-                            let d0 = near_hub_dist[v];
-                            let d1 = d0 + 1;
-                            for &nv in g[v].iter() {
-                                if near_hub_dist[nv].chmin(d1) {
-                                    que.push_back(nv);
-                                    near_hub[nv] = hv;
-                                }
-                            }
-                        }
-                    }
-                    near_hub
-                };
-                // gen tour
-                let tour = {
-                    let mut now = 0;
-                    let mut tour = vec![now];
-                    for &tgt in tgts.iter() {
-                        // -> highway
-                        {
-                            let tv = near_hub[now];
-                            while now != tv {
-                                let mut to = 0;
-                                let mut nxt_dist = INF;
-                                for &nv in g[now].iter() {
-                                    if nxt_dist.chmin(dist[tv][nv]) {
-                                        to = nv;
-                                    }
-                                }
-                                tour.push(to);
-                                now = to;
-                            }
-                        }
-                        // on highway
-                        {
-                            let tv = near_hub[tgt];
-                            let mut que = VecDeque::new();
-                            que.push_back(now);
-                            let mut vis = Set::new();
-                            vis.insert(now);
-                            let mut pre = Map::new();
-                            while let Some(v0) = que.pop_front() {
-                                if v0 == tv {
-                                    break;
-                                }
-                                for &v1 in mst[v0].iter() {
-                                    if vis.insert(v1) {
-                                        que.push_back(v1);
-                                        pre.insert(v1, v0);
-                                    }
-                                }
-                            }
-                            let mut piv = tv;
-                            let mut ad = vec![];
-                            while piv != now {
-                                let pv = pre[&piv];
-                                ad.push(piv);
-                                piv = pv;
-                            }
-                            for nv in ad.into_iter().rev() {
-                                tour.push(nv);
-                            }
-                            now = tv;
-                        }
-                        // -> highway
-                        {
-                            let tv = tgt;
-                            while now != tv {
-                                let mut to = 0;
-                                let mut nxt_dist = INF;
-                                for &nv in g[now].iter() {
-                                    if nxt_dist.chmin(dist[tv][nv]) {
-                                        to = nv;
-                                    }
-                                }
-                                tour.push(to);
-                                now = to;
-                            }
-                        }
-                    }
-                    tour
-                };
-                tour
-            }
-        }
-    }
-    use highway::Highway;
-    mod signal {
-        use super::*;
-        pub struct Signal {
-            dict: Vec<usize>,
-            sets: Vec<Set<usize>>,
-            sig_len: usize,
-            ans: Vec<String>,
-            debug_signal: BitSet,
-            debug_blues: Vec<usize>,
-        }
-        impl Signal {
-            fn gen_dict_random(tour: &[usize], dict_len: usize) -> Vec<usize> {
-                let tour_st = tour.iter().copied().collect::<Set<_>>();
-                let mut not_shown = tour_st.clone();
-                let tour_st = tour_st.into_iter().collect::<Vec<_>>();
-                let mut dict = Vec::<usize>::with_capacity(dict_len);
-                let mut rand = XorShift64::new();
-                loop {
-                    let av = tour_st[rand.next_usize() % tour_st.len()];
-                    dict.push(av);
-                    not_shown.remove(&av);
-                    if dict_len - dict.len() <= not_shown.len() {
-                        break;
-                    }
-                }
-                for v in not_shown {
-                    dict.push(v);
-                }
-                #[cfg(debug_assertions)]
-                {
-                    for &v in tour.iter() {
-                        assert!(dict.contains(&v));
-                    }
-                }
-                dict
-            }
-            fn gen_dict(tour: &[usize], dict_len: usize, sig_len: usize, hash: &[H]) -> Vec<usize> {
-                let mut prio = Map::new();
-                for k in 1..=sig_len {
-                    let mut i0 = 0;
-                    let mut i1 = 0;
-                    let mut st = Map::new();
-                    let mut h = 0;
-                    while i1 < tour.len() {
-                        // add
-                        while i1 < tour.len() && st.len() < k {
-                            let v_add = tour[i1];
-                            i1 += 1;
-                            if st.incr(v_add) {
-                                h ^= hash[v_add];
-                            }
-                        }
-                        // record
-                        if st.len() == k {
-                            prio.entry(h).or_insert(vec![]).push((i0, i1));
-                        }
-                        // del
-                        while st.len() >= k {
-                            let v_del = tour[i0];
-                            i0 += 1;
-                            if st.decr(&v_del) {
-                                h ^= hash[v_del];
-                            }
-                        }
-                    }
-                }
-                let mut prio = prio.into_iter().collect::<Vec<_>>();
-                prio.sort_by_cached_key(|(_h, ranges)| {
-                    Reverse(ranges.iter().map(|&(i0, i1)| i1 - i0 - 1).sum::<usize>())
-                });
-                let mut seg = LazySegmentTree::<bool, bool>::from_vec(
-                    |x, y| x || y,
-                    |x, y| x || y,
-                    |x, y| x || y,
-                    vec![false; tour.len()],
-                );
-                let mut dict = Vec::<usize>::with_capacity(dict_len);
-                let mut not_shown = tour.iter().copied().collect::<Set<_>>();
-                let mut shown = Set::new();
-                for (_h, vc) in prio.into_iter() {
-                    if vc.iter().any(|&(i0, i1)| seg.query(i0, i1 - 1)) {
-                        continue;
-                    }
-                    let (i0, i1) = vc[0];
-                    let mut adds = vec![];
-                    let mut st = Set::new();
-                    for i in i0..i1 {
-                        let v = tour[i];
-                        if st.insert(v) {
-                            adds.push(v);
-                        }
-                    }
-                    for &v in adds.iter() {
-                        if shown.contains(&v) && dict_len - dict.len() < 1 + not_shown.len() {
-                            break;
-                        }
-                        // fix
-                        shown.insert(v);
-                        not_shown.remove(&v);
-                        dict.push(v);
-                    }
-                }
-                dict
-            }
-            pub fn new(
-                n: usize,
-                tour: &[usize],
-                hash: &[H],
-                dict_len: usize,
-                sig_len: usize,
-            ) -> Self {
-                //let dict = Self::gen_dict_random(tour, dict_len);
-                let dict = Self::gen_dict(tour, dict_len, sig_len, hash);
-                let sets = (0..)
-                    .take_while(|&i| i + sig_len - 1 < dict.len())
-                    .map(|i0| {
-                        let mut set = Set::new();
-                        for i in (i0..).take(sig_len) {
-                            set.insert(dict[i]);
-                        }
-                        set
-                    })
-                    .collect::<Vec<_>>();
-                #[cfg(debug_assertions)]
-                {
-                    for &v in tour.iter() {
-                        assert!(sets.iter().any(|set| set.contains(&v)));
-                    }
-                }
-                let debug_signal = BitSet::new(n);
-                let debug_blues = vec![];
-                let ans = vec![];
-                Self {
-                    dict,
-                    sets,
-                    sig_len,
-                    ans,
-                    debug_signal,
-                    debug_blues,
-                }
-            }
-            pub fn can_reach(&self, set: &Set<usize>) -> Option<usize> {
-                for (i0, key) in self.sets.iter().enumerate() {
-                    if set.iter().all(|&v| key.contains(&v)) {
-                        return Some(i0);
-                    }
-                }
-                None
-            }
-            pub fn show_ans(&self) {
-                for a in self.dict.iter() {
-                    print!("{} ", a);
-                }
-                println!();
-                for ans in self.ans.iter() {
-                    println!("{ans}");
-                }
-            }
-            pub fn debug_show(&self) {
-                #[cfg(debug_assertions)]
-                {
-                    for a in self.dict.iter() {
-                        eprint!("{} ", a);
-                    }
-                    eprintln!();
-                }
-            }
-            pub fn plan_signal(&mut self, i0: usize) {
-                #[cfg(debug_assertions)]
-                {
-                    while let Some(v) = self.debug_blues.pop() {
-                        self.debug_signal.set(v, false);
-                    }
-                    for &v in self.dict.iter().skip(i0).take(self.sig_len) {
-                        self.debug_signal.set(v, true);
-                        self.debug_blues.push(v);
-                    }
-                }
-                self.ans.push(format!("s {} {} 0", self.sig_len, i0));
-            }
-            pub fn plan_motion(&mut self, v: usize) {
-                #[cfg(debug_assertions)]
-                {
-                    debug_assert!(self.debug_signal.get(v));
-                }
-                self.ans.push(format!("m {}", v));
-            }
-        }
-    }
-    use signal::Signal;
-    pub struct Solver {
-        t0: Instant,
-        n: usize,
-        t: usize,
-        dict_len: usize,
-        sig_len: usize,
-        g: Vec<Vec<usize>>,
-        tgts: Vec<usize>,
-        xy: Vec<(usize, usize)>,
-        hash: Vec<H>,
-    }
-    impl Solver {
-        pub fn new() -> Self {
-            let t0 = Instant::now();
-            let n = read::<usize>();
-            let m = read::<usize>();
-            let t = read::<usize>();
-            let dict_len = read::<usize>();
-            let sig_len = read::<usize>();
-            let mut g = vec![vec![]; n];
-            for _ in 0..m {
-                let a = read::<usize>();
-                let b = read::<usize>();
-                g[a].push(b);
-                g[b].push(a);
-            }
-            let tgts = read_vec::<usize>(t);
-            let xy = (0..n)
-                .map(|_| (read::<usize>(), read::<usize>()))
-                .collect::<Vec<_>>();
-            let mut rand = XorShift64::new();
-            let hash = (0..n)
-                .map(|_| ((rand.next_usize() as H) << 64) | (rand.next_usize() as H))
-                .collect::<Vec<_>>();
-            Self {
-                t0,
-                n,
-                t,
-                dict_len,
-                sig_len,
-                g,
-                tgts,
-                xy,
-                hash,
-            }
-        }
-        fn gen_tour_path(&self) -> Vec<usize> {
-            let mut dist = vec![vec![INF; self.n]; self.n];
-            for (ini, dist) in dist.iter_mut().enumerate() {
-                dist[ini] = 0;
-                let mut que = VecDeque::new();
-                que.push_back(ini);
-                while let Some(v0) = que.pop_front() {
-                    let d0 = dist[v0];
-                    let d1 = d0 + 1;
-                    for v1 in self.g[v0].iter().copied() {
-                        if dist[v1].chmin(d1) {
-                            que.push_back(v1);
-                        }
-                    }
-                }
-            }
-            let mut v = 0;
-            let mut tour = vec![v];
-            let mut vis_cnt = vec![0; self.n];
-            for &tgt in self.tgts.iter() {
-                let mut ad = vec![];
-                while v != tgt {
-                    let mut nxt = 0;
-                    let mut nd = None;
-                    for nv in self.g[v].iter().copied() {
-                        let nd1 = (dist[tgt][nv], Reverse(vis_cnt[nv]));
-                        if nd.chmin(nd1) {
-                            nxt = nv;
-                        }
-                    }
-                    v = nxt;
-                    ad.push(v);
-                }
-                for v in ad {
-                    tour.push(v);
-                    vis_cnt[v] += 1;
-                }
-            }
-            tour
-        }
-        fn plan(&self, tour: Vec<usize>, mut signal: Signal) {
-            let mut now_pos = 0;
-            let mut score = 0;
-            while now_pos < tour.len() - 1 {
-                let mut set = Set::new();
-                set.insert(tour[now_pos + 1]);
-                let mut best_i0 = signal.can_reach(&set).unwrap();
-                let mut nxt_pos = now_pos + 1;
-                for to in nxt_pos + 1..tour.len() {
-                    let nval = tour[to];
-                    if set.insert(nval) {
-                        if set.len() > self.sig_len {
-                            break;
-                        }
-                        let Some(i0) = signal.can_reach(&set) else {
-                            break;
-                        };
-                        best_i0 = i0;
-                    }
-                    nxt_pos = to;
-                }
-                score += 1;
-                signal.plan_signal(best_i0);
-                for pos in now_pos + 1..=nxt_pos {
-                    signal.plan_motion(tour[pos]);
-                }
-                now_pos = nxt_pos;
-            }
-            eprintln!();
-            signal.show_ans();
-            eprintln!("{score}");
-        }
-        pub fn solve(&self) {
-            let tour = self.gen_tour_path();
-            //let tour = Highway::gen_tour(&self.g, &self.tgts, &mut ChaChaRng::from_seed([0; 32]));
-            let signal = Signal::new(self.n, &tour, &self.hash, self.dict_len, self.sig_len);
-            self.plan(tour, signal);
-        }
-    }
-}
-
 mod solver2 {
     use super::*;
     type Map<K, V> = BTreeMap<K, V>;
@@ -6476,8 +5977,9 @@ mod solver2 {
     const INF: usize = 1usize << 60;
     mod comm {
         use super::*;
+        #[derive(Clone)]
         pub struct Comm {
-            dict: Vec<usize>,
+            pub dict: Vec<usize>,
             root_to_i0ln: Vec<Vec<(usize, usize)>>,
             ans: Vec<String>,
             score: usize,
@@ -6573,8 +6075,8 @@ mod solver2 {
                 for ans in self.ans.iter() {
                     println!("{ans}");
                 }
-                eprintln!();
-                eprintln!("{}", self.score);
+                //eprintln!();
+                //eprintln!("{}", self.score);
             }
         }
     }
@@ -6679,6 +6181,252 @@ mod solver2 {
                 xy,
                 hash,
             }
+        }
+        fn build_root_graph2(&self, sig: &Comm)
+        //-> Vec<Vec<Vec<(usize, usize)>>>
+        {
+            // build graph
+            let (inner, ag, bridge) = {
+                let mut inner = vec![];
+                for i0 in 0..sig.dict.len() {
+                    let mut uf = UnionFind::new(self.n);
+                    for (vi0, &v0) in sig.dict.iter().skip(i0).take(self.sig_len).enumerate() {
+                        for (vi1, &v1) in sig.dict.iter().skip(i0).take(self.sig_len).enumerate() {
+                            if vi0 >= vi1 {
+                                continue;
+                            }
+                            if self.g[v0].iter().any(|(nv, _)| *nv == v1) {
+                                uf.unite(v0, v1);
+                            }
+                        }
+                    }
+                    let v0 = sig.dict[i0];
+                    let mut inner1 = Set::new();
+                    for &v in sig.dict.iter().skip(i0).take(self.sig_len) {
+                        if uf.same(v, v0) {
+                            inner1.insert(v);
+                        }
+                    }
+                    inner.push(inner1);
+                }
+                #[cfg(debug_assertions)]
+                {
+                    debug_assert!((0..self.n).all(|v| inner.iter().any(|inner| inner.contains(&v))));
+                }
+                let mut ag = vec![vec![]; inner.len()];
+                let mut bridge = vec![vec![(INF, INF); ag.len()]; ag.len()];
+                for av0 in 0..ag.len() {
+                    for av1 in (0..ag.len()).skip(av0 + 1) {
+                        let (mut b0, mut b1) = (INF, INF);
+                        'con: for &v0 in inner[av0].iter() {
+                            for &v1 in inner[av1].iter() {
+                                if v0 == v1 {
+                                    b0 = v0;
+                                    b1 = v1;
+                                    break 'con;
+                                } else {
+                                    for (nv0, _) in self.g[v0].iter() {
+                                        if *nv0 == v1 {
+                                            b0 = v0;
+                                            b1 = v1;
+                                            break 'con;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (b0, b1) != (INF, INF) {
+                            ag[av0].push(av1);
+                            ag[av1].push(av0);
+                            bridge[av0][av1] = (b0, b1);
+                            bridge[av1][av0] = (b1, b0);
+                        }
+                    }
+                }
+                #[cfg(debug_assertions)]
+                {
+                    for av0 in 0..ag.len() {
+                        for av1 in 0..ag.len() {
+                            let (b0, b1) = bridge[av0][av1];
+                            if (b0, b1) != (INF, INF) {
+                                debug_assert!(inner[av0].contains(&b0));
+                                debug_assert!(inner[av1].contains(&b1));
+                            }
+                        }
+                    }
+                }
+                (inner, ag, bridge)
+            };
+            let parts = inner
+                .iter()
+                .map(|inner| {
+                    let mut parts = Map::new();
+                    for (vi0, &v0) in inner.iter().enumerate() {
+                        for &v1 in inner.iter().skip(vi0) {
+                            fn dfs(
+                                v: usize,
+                                t: usize,
+                                g: &[Vec<(usize, usize)>],
+                                inner: &Set<usize>,
+                                vis: &mut Set<usize>,
+                                tour: &mut Vec<usize>,
+                            ) -> bool {
+                                if v == t {
+                                    return true;
+                                }
+                                for &(nv, _) in g[v].iter() {
+                                    if !inner.contains(&nv) {
+                                        continue;
+                                    }
+                                    if vis.insert(nv) {
+                                        tour.push(nv);
+                                        if dfs(nv, t, g, inner, vis, tour) {
+                                            return true;
+                                        }
+                                        tour.pop();
+                                    }
+                                }
+                                false
+                            }
+                            let mut vis = Set::new();
+                            vis.insert(v0);
+                            let mut tour = vec![v0];
+                            dfs(v0, v1, &self.g, inner, &mut vis, &mut tour);
+                            if tour.is_empty() {
+                                parts.insert((v0, v1), vec![]);
+                                parts.insert((v1, v0), vec![]);
+                            } else {
+                                parts.insert(
+                                    (v0, v1),
+                                    tour.iter().skip(1).copied().collect::<Vec<_>>(),
+                                );
+                                parts.insert(
+                                    (v1, v0),
+                                    tour.iter().rev().skip(1).copied().collect::<Vec<_>>(),
+                                );
+                            }
+                        }
+                    }
+                    debug_assert!(inner
+                        .iter()
+                        .all(|&v0| inner.iter().all(|&v1| parts.contains_key(&(v0, v1)))));
+                    parts
+                })
+                .collect::<Vec<_>>();
+            let adist = (0..ag.len())
+                .map(|ini| {
+                    let mut dist = vec![INF; ag.len()];
+                    dist[ini] = 0;
+                    let mut que = VecDeque::new();
+                    que.push_back(ini);
+                    while let Some(av0) = que.pop_front() {
+                        let d0 = dist[av0];
+                        let d1 = d0 + 1;
+                        for &av1 in ag[av0].iter() {
+                            if dist[av1].chmin(d1) {
+                                que.push_back(av1);
+                            }
+                        }
+                    }
+                    dist
+                })
+                .collect::<Vec<_>>();
+            // dp
+            let mut tgt_avs = {
+                let mut dp = vec![vec![INF; ag.len()]; self.tgts.len() + 1];
+                let mut pre = vec![vec![INF; ag.len()]; self.tgts.len() + 1];
+                for (ini, inner) in inner.iter().enumerate() {
+                    if inner.contains(&0) {
+                        dp[0][ini] = 0;
+                    }
+                }
+                for (ti0, tgt_v1) in self.tgts.iter().enumerate() {
+                    let ti1 = ti0 + 1;
+                    for av0 in 0..ag.len() {
+                        let org = dp[ti0][av0];
+                        if org == INF {
+                            continue;
+                        }
+                        for av1 in 0..ag.len() {
+                            if !inner[av1].contains(&tgt_v1) {
+                                continue;
+                            }
+                            let delta = adist[av0][av1];
+                            if delta == INF {
+                                continue;
+                            }
+                            let nxt = org + delta;
+                            if dp[ti1][av1].chmin(nxt) {
+                                pre[ti1][av1] = av0;
+                            }
+                        }
+                    }
+                }
+                let mut av_now = INF; // dummy
+                let mut ev = INF;
+                for av in 0..ag.len() {
+                    if !inner[av].contains(self.tgts.last().unwrap()) {
+                        continue;
+                    }
+                    if ev.chmin(dp[self.tgts.len()][av]) {
+                        av_now = av;
+                    }
+                }
+                eprintln!("{ev}");
+                let mut avs = VecDeque::with_capacity(self.tgts.len() + 1);
+                for ti in (1..=self.tgts.len()).rev() {
+                    avs.push_front(av_now);
+                    av_now = pre[ti][av_now];
+                }
+                avs.push_front(av_now);
+                avs
+            };
+            let mut now_av = tgt_avs.pop_front().unwrap();
+            let mut now_v = 0;
+            // comm.set_sig();
+            for (&tgt_v, tgt_av) in self.tgts.iter().zip(tgt_avs.into_iter()) {
+                // to group
+                while now_av != tgt_av {
+                    // plan next root
+                    let nxt_av = {
+                        let mut nxt_av = 0;
+                        let mut nxt_dist = INF;
+                        for &nav in ag[now_av].iter() {
+                            if nxt_dist.chmin(adist[tgt_av][nav]) {
+                                nxt_av = nav;
+                            }
+                        }
+                        nxt_av
+                    };
+                    debug_assert_ne!(now_av, nxt_av);
+                    // plan bridge
+                    let (b0, b1) = bridge[now_av][nxt_av];
+                    debug_assert!(inner[now_av].contains(&now_v));
+                    debug_assert!(inner[now_av].contains(&b0));
+                    debug_assert!(inner[nxt_av].contains(&b1));
+                    debug_assert_ne!((b0, b1), (INF, INF));
+                    // move to bridge entry
+                    for &nv in parts[now_av][&(now_v, b0)].iter() {
+                        //comm.motion(nv);
+                    }
+                    // transition to next root
+                    //comm.set_sig(nxt_av);
+                    if b0 != b1 {
+                        //comm.motion(b1);
+                    }
+                    now_v = b1;
+                    now_av = nxt_av;
+                }
+                debug_assert_eq!(now_av, tgt_av);
+                debug_assert!(inner[now_av].contains(&now_v));
+                debug_assert!(inner[tgt_av].contains(&tgt_v));
+                // to tgt
+                for &nv in parts[now_av][&(now_v, tgt_v)].iter() {
+                    //comm.motion(nv);
+                }
+                now_v = tgt_v;
+            }
+            //comm.answer();
         }
         fn build_root_graph(&self, ufs: &mut [UnionFind]) -> Vec<Vec<Vec<(usize, usize)>>> {
             let h = ufs.len();
@@ -6881,6 +6629,7 @@ mod solver2 {
             let bridge = self.build_bridge(&mut ufs);
             let parts = self.build_inner_path(&mut ufs);
             let mut comm = Comm::new(self.n, self.dict_len, &mut ufs);
+            self.build_root_graph2(&comm.clone());
             let mut tgt_ys = self.plan_heights(&rdist, &mut ufs);
             // main
             let mut now_v = 0;
