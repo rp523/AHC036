@@ -5980,29 +5980,25 @@ mod solver2 {
         #[derive(Clone)]
         pub struct Comm {
             pub dict: Vec<usize>,
-            root_to_i0ln: Vec<Vec<(usize, usize)>>,
             ans: Vec<String>,
             score: usize,
-            // debug
             sig_state: Vec<bool>,
+            // debug
             now_v: usize,
         }
         impl Comm {
-            pub fn new(n: usize, dict_len: usize, ufs: &mut [UnionFind]) -> Self {
+            pub fn new(n: usize, dict_len: usize, mut ufs: Vec<UnionFind>) -> Self {
                 let h = ufs.len();
                 let mut dict = Vec::with_capacity(dict_len);
-                let mut root_to_i0ln = vec![vec![(INF, INF); n]; h];
                 let mut v_is_shown_at = Map::new();
                 for y in 0..h {
                     let uf = &mut ufs[y];
-                    let root_to_i0ln = &mut root_to_i0ln[y];
                     let mut subs = vec![vec![]; n];
                     for v in 0..n {
                         subs[uf.root(v)].push(v);
                     }
                     subs.into_iter().enumerate().for_each(|(rv, subs)| {
                         if uf.root(rv) == rv && subs.len() > 1 {
-                            root_to_i0ln[rv] = (dict.len(), subs.len());
                             subs.into_iter().for_each(|v| {
                                 v_is_shown_at.insert(v, dict.len());
                                 dict.push(v);
@@ -6012,21 +6008,11 @@ mod solver2 {
                 }
                 for v in 0..n {
                     if !v_is_shown_at.contains_key(&v) {
-                        root_to_i0ln.iter_mut().for_each(|root_to_i0ln| {
-                            root_to_i0ln[v] = (dict.len(), 1);
-                        });
                         v_is_shown_at.insert(v, dict.len());
                         dict.push(v);
                     }
                 }
                 debug_assert!(v_is_shown_at.len() == n);
-                for (y, uf) in ufs.iter_mut().enumerate() {
-                    for v in 0..n {
-                        if uf.group_size(v) == 1 {
-                            root_to_i0ln[y][v] = (v_is_shown_at[&v], 1);
-                        }
-                    }
-                }
                 debug_assert!(dict.len() <= dict_len);
                 while dict.len() < dict_len {
                     dict.push(0);
@@ -6034,15 +6020,13 @@ mod solver2 {
                 debug_assert!(dict.len() <= dict_len);
                 Self {
                     dict,
-                    root_to_i0ln,
                     ans: vec![],
                     score: 0,
                     sig_state: vec![false; n],
                     now_v: 0,
                 }
             }
-            pub fn set_sig(&mut self, y: usize, rv: usize) {
-                let (i0, ln) = self.root_to_i0ln[y][rv];
+            pub fn set_sig(&mut self, i0: usize, ln: usize) {
                 debug_assert!(i0 != INF && ln != INF);
                 self.ans.push(format!("s {} {} 0", ln, i0));
                 self.score += 1;
@@ -6075,8 +6059,8 @@ mod solver2 {
                 for ans in self.ans.iter() {
                     println!("{ans}");
                 }
-                //eprintln!();
-                //eprintln!("{}", self.score);
+                eprintln!();
+                eprintln!("{}", self.score);
             }
         }
     }
@@ -6182,82 +6166,151 @@ mod solver2 {
                 hash,
             }
         }
-        fn build_root_graph2(&self, sig: &Comm)
-        //-> Vec<Vec<Vec<(usize, usize)>>>
-        {
+        fn actual_motion(
+            &self,
+            mut comm: Comm,
+            mut tgt_avs: VecDeque<usize>,
+            inner: Vec<Set<usize>>,
+            ag: Vec<Vec<usize>>,
+            adist: Vec<Vec<usize>>,
+            bridge: Vec<Vec<(usize, usize)>>,
+            inner_path: Vec<Map<(usize, usize), Vec<usize>>>,
+            lens: Vec<usize>,
+        ) {
             // build graph
-            let (inner, ag, bridge) = {
-                let mut inner = vec![];
-                for i0 in 0..sig.dict.len() {
-                    let mut uf = UnionFind::new(self.n);
-                    for (vi0, &v0) in sig.dict.iter().skip(i0).take(self.sig_len).enumerate() {
-                        for (vi1, &v1) in sig.dict.iter().skip(i0).take(self.sig_len).enumerate() {
-                            if vi0 >= vi1 {
-                                continue;
-                            }
-                            if self.g[v0].iter().any(|(nv, _)| *nv == v1) {
-                                uf.unite(v0, v1);
+            // dp
+            let mut now_av = tgt_avs.pop_front().unwrap();
+            let mut now_v = 0;
+            comm.set_sig(now_av, lens[now_av]);
+            for (&tgt_v, tgt_av) in self.tgts.iter().zip(tgt_avs.into_iter()) {
+                // root to root
+                while now_av != tgt_av {
+                    // plan next root
+                    let nxt_av = {
+                        let mut nxt_av = 0;
+                        let mut nxt_dist = INF;
+                        for &nav in ag[now_av].iter() {
+                            if nxt_dist.chmin(adist[tgt_av][nav]) {
+                                nxt_av = nav;
                             }
                         }
+                        nxt_av
+                    };
+                    debug_assert_ne!(now_av, nxt_av);
+                    // plan bridge
+                    let (b0, b1) = bridge[now_av][nxt_av];
+                    debug_assert!(inner[now_av].contains(&now_v));
+                    debug_assert!(inner[now_av].contains(&b0));
+                    debug_assert!(inner[nxt_av].contains(&b1));
+                    debug_assert_ne!((b0, b1), (INF, INF));
+                    // move to bridge entry
+                    for &nv in inner_path[now_av][&(now_v, b0)].iter() {
+                        comm.motion(nv);
                     }
-                    let v0 = sig.dict[i0];
-                    let mut inner1 = Set::new();
-                    for &v in sig.dict.iter().skip(i0).take(self.sig_len) {
-                        if uf.same(v, v0) {
-                            inner1.insert(v);
+                    // transition to next root
+                    comm.set_sig(nxt_av, lens[nxt_av]);
+                    if b0 != b1 {
+                        comm.motion(b1);
+                    }
+                    now_v = b1;
+                    now_av = nxt_av;
+                }
+                debug_assert_eq!(now_av, tgt_av);
+                debug_assert!(inner[now_av].contains(&now_v));
+                debug_assert!(inner[tgt_av].contains(&tgt_v));
+                // to tgt
+                for &nv in inner_path[now_av][&(now_v, tgt_v)].iter() {
+                    comm.motion(nv);
+                }
+                now_v = tgt_v;
+            }
+            comm.answer();
+        }
+        fn build_root_graph(
+            &self,
+            comm: &Comm,
+        ) -> (
+            Vec<Set<usize>>,
+            Vec<Vec<usize>>,
+            Vec<Vec<(usize, usize)>>,
+            Vec<usize>,
+        ) {
+            let mut inner = vec![];
+            let mut lens = vec![];
+            for i0 in 0..comm.dict.len() {
+                let mut uf = UnionFind::new(self.n);
+                for (vi0, &v0) in comm.dict.iter().skip(i0).take(self.sig_len).enumerate() {
+                    for (vi1, &v1) in comm.dict.iter().skip(i0).take(self.sig_len).enumerate() {
+                        if vi0 >= vi1 {
+                            continue;
+                        }
+                        if self.g[v0].iter().any(|(nv, _)| *nv == v1) {
+                            uf.unite(v0, v1);
                         }
                     }
-                    inner.push(inner1);
                 }
-                #[cfg(debug_assertions)]
-                {
-                    debug_assert!((0..self.n).all(|v| inner.iter().any(|inner| inner.contains(&v))));
+                let v0 = comm.dict[i0];
+                let mut inner1 = Set::new();
+                let mut i1 = i0;
+                for (i, &v) in comm.dict.iter().enumerate().skip(i0).take(self.sig_len) {
+                    if uf.same(v, v0) {
+                        i1.chmax(i);
+                        inner1.insert(v);
+                    }
                 }
-                let mut ag = vec![vec![]; inner.len()];
-                let mut bridge = vec![vec![(INF, INF); ag.len()]; ag.len()];
-                for av0 in 0..ag.len() {
-                    for av1 in (0..ag.len()).skip(av0 + 1) {
-                        let (mut b0, mut b1) = (INF, INF);
-                        'con: for &v0 in inner[av0].iter() {
-                            for &v1 in inner[av1].iter() {
-                                if v0 == v1 {
-                                    b0 = v0;
-                                    b1 = v1;
-                                    break 'con;
-                                } else {
-                                    for (nv0, _) in self.g[v0].iter() {
-                                        if *nv0 == v1 {
-                                            b0 = v0;
-                                            b1 = v1;
-                                            break 'con;
-                                        }
+                inner.push(inner1);
+                lens.push(i1 - i0 + 1);
+            }
+            #[cfg(debug_assertions)]
+            {
+                debug_assert!((0..self.n).all(|v| inner.iter().any(|inner| inner.contains(&v))));
+            }
+            let mut ag = vec![vec![]; inner.len()];
+            let mut bridge = vec![vec![(INF, INF); ag.len()]; ag.len()];
+            for av0 in 0..ag.len() {
+                for av1 in (0..ag.len()).skip(av0 + 1) {
+                    let (mut b0, mut b1) = (INF, INF);
+                    'con: for &v0 in inner[av0].iter() {
+                        for &v1 in inner[av1].iter() {
+                            if v0 == v1 {
+                                b0 = v0;
+                                b1 = v1;
+                                break 'con;
+                            } else {
+                                for (nv0, _) in self.g[v0].iter() {
+                                    if *nv0 == v1 {
+                                        b0 = v0;
+                                        b1 = v1;
+                                        break 'con;
                                     }
                                 }
                             }
                         }
+                    }
+                    if (b0, b1) != (INF, INF) {
+                        ag[av0].push(av1);
+                        ag[av1].push(av0);
+                        bridge[av0][av1] = (b0, b1);
+                        bridge[av1][av0] = (b1, b0);
+                    }
+                }
+            }
+            #[cfg(debug_assertions)]
+            {
+                for av0 in 0..ag.len() {
+                    for av1 in 0..ag.len() {
+                        let (b0, b1) = bridge[av0][av1];
                         if (b0, b1) != (INF, INF) {
-                            ag[av0].push(av1);
-                            ag[av1].push(av0);
-                            bridge[av0][av1] = (b0, b1);
-                            bridge[av1][av0] = (b1, b0);
+                            debug_assert!(inner[av0].contains(&b0));
+                            debug_assert!(inner[av1].contains(&b1));
                         }
                     }
                 }
-                #[cfg(debug_assertions)]
-                {
-                    for av0 in 0..ag.len() {
-                        for av1 in 0..ag.len() {
-                            let (b0, b1) = bridge[av0][av1];
-                            if (b0, b1) != (INF, INF) {
-                                debug_assert!(inner[av0].contains(&b0));
-                                debug_assert!(inner[av1].contains(&b1));
-                            }
-                        }
-                    }
-                }
-                (inner, ag, bridge)
-            };
-            let parts = inner
+            }
+            (inner, ag, bridge, lens)
+        }
+        fn build_inner_path(&self, inner: &[Set<usize>]) -> Vec<Map<(usize, usize), Vec<usize>>> {
+            inner
                 .iter()
                 .map(|inner| {
                     let mut parts = Map::new();
@@ -6312,8 +6365,10 @@ mod solver2 {
                         .all(|&v0| inner.iter().all(|&v1| parts.contains_key(&(v0, v1)))));
                     parts
                 })
-                .collect::<Vec<_>>();
-            let adist = (0..ag.len())
+                .collect::<Vec<_>>()
+        }
+        fn build_root_dist(&self, ag: &[Vec<usize>]) -> Vec<Vec<usize>> {
+            (0..ag.len())
                 .map(|ini| {
                     let mut dist = vec![INF; ag.len()];
                     dist[ini] = 0;
@@ -6330,367 +6385,70 @@ mod solver2 {
                     }
                     dist
                 })
-                .collect::<Vec<_>>();
-            // dp
-            let mut tgt_avs = {
-                let mut dp = vec![vec![INF; ag.len()]; self.tgts.len() + 1];
-                let mut pre = vec![vec![INF; ag.len()]; self.tgts.len() + 1];
-                for (ini, inner) in inner.iter().enumerate() {
-                    if inner.contains(&0) {
-                        dp[0][ini] = 0;
-                    }
+                .collect::<Vec<_>>()
+        }
+        fn plan_roots(
+            &self,
+            inner: &[Set<usize>],
+            ag: &[Vec<usize>],
+            adist: &[Vec<usize>],
+        ) -> VecDeque<usize> {
+            let mut dp = vec![vec![INF; ag.len()]; self.tgts.len() + 1];
+            let mut pre = vec![vec![INF; ag.len()]; self.tgts.len() + 1];
+            for (ini, inner) in inner.iter().enumerate() {
+                if inner.contains(&0) {
+                    dp[0][ini] = 1;
                 }
-                for (ti0, tgt_v1) in self.tgts.iter().enumerate() {
-                    let ti1 = ti0 + 1;
-                    for av0 in 0..ag.len() {
-                        let org = dp[ti0][av0];
-                        if org == INF {
+            }
+            for (ti0, tgt_v1) in self.tgts.iter().enumerate() {
+                let ti1 = ti0 + 1;
+                for av0 in 0..ag.len() {
+                    let org = dp[ti0][av0];
+                    if org == INF {
+                        continue;
+                    }
+                    for av1 in 0..ag.len() {
+                        if !inner[av1].contains(&tgt_v1) {
                             continue;
                         }
-                        for av1 in 0..ag.len() {
-                            if !inner[av1].contains(&tgt_v1) {
-                                continue;
-                            }
-                            let delta = adist[av0][av1];
-                            if delta == INF {
-                                continue;
-                            }
-                            let nxt = org + delta;
-                            if dp[ti1][av1].chmin(nxt) {
-                                pre[ti1][av1] = av0;
-                            }
-                        }
-                    }
-                }
-                let mut av_now = INF; // dummy
-                let mut ev = INF;
-                for av in 0..ag.len() {
-                    if !inner[av].contains(self.tgts.last().unwrap()) {
-                        continue;
-                    }
-                    if ev.chmin(dp[self.tgts.len()][av]) {
-                        av_now = av;
-                    }
-                }
-                eprintln!("{ev}");
-                let mut avs = VecDeque::with_capacity(self.tgts.len() + 1);
-                for ti in (1..=self.tgts.len()).rev() {
-                    avs.push_front(av_now);
-                    av_now = pre[ti][av_now];
-                }
-                avs.push_front(av_now);
-                avs
-            };
-            let mut now_av = tgt_avs.pop_front().unwrap();
-            let mut now_v = 0;
-            // comm.set_sig();
-            for (&tgt_v, tgt_av) in self.tgts.iter().zip(tgt_avs.into_iter()) {
-                // to group
-                while now_av != tgt_av {
-                    // plan next root
-                    let nxt_av = {
-                        let mut nxt_av = 0;
-                        let mut nxt_dist = INF;
-                        for &nav in ag[now_av].iter() {
-                            if nxt_dist.chmin(adist[tgt_av][nav]) {
-                                nxt_av = nav;
-                            }
-                        }
-                        nxt_av
-                    };
-                    debug_assert_ne!(now_av, nxt_av);
-                    // plan bridge
-                    let (b0, b1) = bridge[now_av][nxt_av];
-                    debug_assert!(inner[now_av].contains(&now_v));
-                    debug_assert!(inner[now_av].contains(&b0));
-                    debug_assert!(inner[nxt_av].contains(&b1));
-                    debug_assert_ne!((b0, b1), (INF, INF));
-                    // move to bridge entry
-                    for &nv in parts[now_av][&(now_v, b0)].iter() {
-                        //comm.motion(nv);
-                    }
-                    // transition to next root
-                    //comm.set_sig(nxt_av);
-                    if b0 != b1 {
-                        //comm.motion(b1);
-                    }
-                    now_v = b1;
-                    now_av = nxt_av;
-                }
-                debug_assert_eq!(now_av, tgt_av);
-                debug_assert!(inner[now_av].contains(&now_v));
-                debug_assert!(inner[tgt_av].contains(&tgt_v));
-                // to tgt
-                for &nv in parts[now_av][&(now_v, tgt_v)].iter() {
-                    //comm.motion(nv);
-                }
-                now_v = tgt_v;
-            }
-            //comm.answer();
-        }
-        fn build_root_graph(&self, ufs: &mut [UnionFind]) -> Vec<Vec<Vec<(usize, usize)>>> {
-            let h = ufs.len();
-            let n = self.g.len();
-            let mut rg = vec![vec![Set::new(); n]; h];
-            // same level
-            for y in 0..h {
-                for &(v0, v1) in self.es.iter() {
-                    let r0 = ufs[y].root(v0);
-                    let r1 = ufs[y].root(v1);
-                    if r0 != r1 {
-                        rg[y][r0].insert((y, r1));
-                        rg[y][r1].insert((y, r0));
-                    }
-                }
-            }
-            // different level
-            for y0 in 0..h {
-                for y1 in y0 + 1..h {
-                    for v in 0..n {
-                        let r0 = ufs[y0].root(v);
-                        let r1 = ufs[y1].root(v);
-                        rg[y0][r0].insert((y1, r1));
-                        rg[y1][r1].insert((y0, r0));
-                    }
-                }
-            }
-            rg.into_iter()
-                .map(|rvs| {
-                    rvs.into_iter()
-                        .map(|rvs| rvs.into_iter().collect::<Vec<_>>())
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>()
-        }
-        fn build_root_dist(
-            &self,
-            rg: &[Vec<Vec<(usize, usize)>>],
-            ufs: &mut [UnionFind],
-        ) -> Vec<Vec<Vec<Vec<usize>>>> {
-            let h = ufs.len();
-            let n = self.g.len();
-            (0..h)
-                .map(|ini_y| {
-                    (0..n)
-                        .map(|ini_v| -> Vec<Vec<usize>> {
-                            let mut rdist = vec![vec![INF; n]; h];
-                            let ini_rv = ufs[ini_y].root(ini_v);
-                            if ini_v != ini_rv {
-                                return rdist;
-                            }
-                            rdist[ini_y][ini_rv] = 0;
-                            let mut que = VecDeque::new();
-                            que.push_back((ini_y, ini_rv));
-                            while let Some((y0, rv0)) = que.pop_front() {
-                                let d0 = rdist[y0][rv0];
-                                let d1 = d0 + 1;
-                                for (y1, rv1) in rg[y0][rv0].iter().copied() {
-                                    if rdist[y1][rv1].chmin(d1) {
-                                        que.push_back((y1, rv1));
-                                    }
-                                }
-                            }
-                            rdist
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>()
-        }
-        fn build_bridge(&self, ufs: &mut [UnionFind]) -> Vec<Vec<Vec<Vec<(usize, usize)>>>> {
-            let h = ufs.len();
-            let n = self.g.len();
-            let mut rcon = vec![vec![vec![vec![(INF, INF); n]; h]; n]; h];
-            // same level
-            for y in 0..h {
-                for &(v0, v1) in self.es.iter() {
-                    let r0 = ufs[y].root(v0);
-                    let r1 = ufs[y].root(v1);
-                    if r0 != r1 {
-                        rcon[y][r0][y][r1] = (v0, v1);
-                        rcon[y][r1][y][r0] = (v1, v0);
-                    }
-                }
-            }
-            // different level
-            for y0 in 0..h {
-                for y1 in y0 + 1..h {
-                    for v in 0..n {
-                        let r0 = ufs[y0].root(v);
-                        let r1 = ufs[y1].root(v);
-                        rcon[y0][r0][y1][r1] = (v, v);
-                        rcon[y1][r1][y0][r0] = (v, v);
-                    }
-                }
-            }
-            rcon
-        }
-        fn build_inner_path(&self, ufs: &mut [UnionFind]) -> Vec<Vec<Vec<Vec<usize>>>> {
-            let h = ufs.len();
-            let n = self.g.len();
-            fn dfs(
-                v: usize,
-                t: usize,
-                g: &[Vec<(usize, usize)>],
-                vis: &mut Set<usize>,
-                uf: &mut UnionFind,
-                path: &mut Vec<usize>,
-            ) -> bool {
-                if v == t {
-                    return true;
-                }
-                vis.insert(v);
-                let rv = uf.root(v);
-                for (nv, _) in g[v].iter().copied() {
-                    if !uf.same(nv, rv) {
-                        continue;
-                    }
-                    if vis.contains(&nv) {
-                        continue;
-                    }
-                    path.push(nv);
-                    if dfs(nv, t, g, vis, uf, path) {
-                        return true;
-                    }
-                    path.pop();
-                }
-                false
-            }
-            (0..h)
-                .map(|y| {
-                    let mut inner_path = vec![vec![vec![]; n]; n];
-                    let uf = &mut ufs[y];
-                    for v in 0..n {
-                        let rv = uf.root(v);
-                        if v != rv {
-                            dfs(v, rv, &self.g, &mut Set::new(), uf, &mut inner_path[v][rv]);
-                            inner_path[rv][v] = inner_path[v][rv]
-                                .iter()
-                                .rev()
-                                .skip(1)
-                                .copied()
-                                .chain(vec![v].into_iter())
-                                .collect::<Vec<_>>();
-                        }
-                    }
-                    inner_path
-                })
-                .collect::<Vec<_>>()
-        }
-        fn plan_heights(
-            &self,
-            rdist: &[Vec<Vec<Vec<usize>>>],
-            ufs: &mut [UnionFind],
-        ) -> VecDeque<usize> {
-            let h = rdist.len();
-            let mut dp = vec![vec![INF; h]; self.tgts.len() + 1];
-            let mut pre = vec![vec![INF; h]; self.tgts.len() + 1];
-            for y in 0..h {
-                dp[0][y] = 0;
-            }
-            for (ti0, &tgt1) in self.tgts.iter().enumerate() {
-                let ti1 = ti0 + 1;
-                let tgt0 = if ti0 == 0 { 0 } else { self.tgts[ti0 - 1] };
-                for y0 in 0..h {
-                    let r0 = ufs[y0].root(tgt0);
-                    let org = dp[ti0][y0];
-                    for y1 in 0..h {
-                        let r1 = ufs[y1].root(tgt1);
-                        let delta = rdist[y0][r0][y1][r1];
+                        let delta = adist[av0][av1];
                         if delta == INF {
                             continue;
                         }
                         let nxt = org + delta;
-                        if dp[ti1][y1].chmin(nxt) {
-                            pre[ti1][y1] = y0;
+                        if dp[ti1][av1].chmin(nxt) {
+                            pre[ti1][av1] = av0;
                         }
                     }
                 }
             }
-            let mut ynow = 0;
-            let mut ev = None;
-            for y in 0..h {
-                if ev.chmin(dp[self.tgts.len()][y]) {
-                    ynow = y;
+            let mut av_now = INF; // dummy
+            let mut ev = INF;
+            for av in 0..ag.len() {
+                if !inner[av].contains(self.tgts.last().unwrap()) {
+                    continue;
+                }
+                if ev.chmin(dp[self.tgts.len()][av]) {
+                    av_now = av;
                 }
             }
-            let mut ys = VecDeque::with_capacity(self.tgts.len() + 1);
+            let mut avs = VecDeque::with_capacity(self.tgts.len() + 1);
             for ti in (1..=self.tgts.len()).rev() {
-                ys.push_front(ynow);
-                let ypre = pre[ti][ynow];
-                ynow = ypre;
+                avs.push_front(av_now);
+                av_now = pre[ti][av_now];
             }
-            ys.push_front(ynow);
-            ys
+            avs.push_front(av_now);
+            avs
         }
         pub fn solve(&self) {
-            let mut ufs = self.split_into_subsets();
-            let rg = self.build_root_graph(&mut ufs);
-            let rdist = self.build_root_dist(&rg, &mut ufs);
-            let bridge = self.build_bridge(&mut ufs);
-            let parts = self.build_inner_path(&mut ufs);
-            let mut comm = Comm::new(self.n, self.dict_len, &mut ufs);
-            self.build_root_graph2(&comm.clone());
-            let mut tgt_ys = self.plan_heights(&rdist, &mut ufs);
+            let ufs = self.split_into_subsets();
+            let comm = Comm::new(self.n, self.dict_len, ufs);
+            let (inner, ag, bridge, lens) = self.build_root_graph(&comm);
+            let adist = self.build_root_dist(&ag);
+            let inner_path = self.build_inner_path(&inner);
+            let tgt_avs = self.plan_roots(&inner, &ag, &adist);
+            self.actual_motion(comm, tgt_avs, inner, ag, adist, bridge, inner_path, lens);
             // main
-            let mut now_v = 0;
-            let mut now_y = tgt_ys.pop_front().unwrap();
-            let mut now_r = ufs[now_y].root(now_v);
-            comm.set_sig(now_y, now_r);
-            for (&tgt_v, tgt_y) in self.tgts.iter().zip(tgt_ys.into_iter()) {
-                // to center
-                for &nv in parts[now_y][now_v][now_r].iter() {
-                    comm.motion(nv);
-                }
-                now_v = now_r;
-                // center to another center
-                let tgt_r = ufs[tgt_y].root(tgt_v);
-                while (now_y, now_r) != (tgt_y, tgt_r) {
-                    // now at root center
-                    debug_assert!(ufs[now_y].root(now_v) == now_v);
-
-                    // plan next root
-                    let (nxt_y, nxt_r) = {
-                        let mut nxt_y = 0;
-                        let mut nxt_r = 0;
-                        let mut nxt_dist = INF;
-                        for &(ny, nr) in rg[now_y][now_r].iter() {
-                            if nxt_dist.chmin(rdist[tgt_y][tgt_r][ny][nr]) {
-                                nxt_y = ny;
-                                nxt_r = nr;
-                            }
-                        }
-                        (nxt_y, nxt_r)
-                    };
-                    debug_assert_ne!((now_y, now_r), (nxt_y, nxt_r));
-                    // plan bridge
-                    let (b0, b1) = bridge[now_y][now_r][nxt_y][nxt_r];
-                    debug_assert!(ufs[now_y].root(b0) == now_r);
-                    debug_assert!(ufs[nxt_y].root(b1) == nxt_r);
-                    // move to bridge entry
-                    for &nv in parts[now_y][now_v][b0].iter() {
-                        comm.motion(nv);
-                    }
-                    // transition to next root
-                    comm.set_sig(nxt_y, nxt_r);
-                    if b0 != b1 {
-                        comm.motion(b1);
-                    }
-                    now_v = b1;
-                    now_y = nxt_y;
-                    now_r = nxt_r;
-                    // move to next center
-                    for &nv in parts[now_y][now_v][now_r].iter() {
-                        comm.motion(nv);
-                    }
-                    now_v = now_r;
-                }
-                // to tgt
-                for &nv in parts[now_y][now_v][tgt_v].iter() {
-                    comm.motion(nv);
-                }
-                now_v = tgt_v;
-            }
-            comm.answer();
         }
         fn split_into_subsets(&self) -> Vec<UnionFind> {
             let dist = (0..self.n)
