@@ -5987,37 +5987,7 @@ mod solver2 {
             now_v: usize,
         }
         impl Comm {
-            pub fn new(n: usize, dict_len: usize, mut ufs: Vec<UnionFind>) -> Self {
-                let h = ufs.len();
-                let mut dict = Vec::with_capacity(dict_len);
-                let mut v_is_shown_at = Map::new();
-                for y in 0..h {
-                    let uf = &mut ufs[y];
-                    let mut subs = vec![vec![]; n];
-                    for v in 0..n {
-                        subs[uf.root(v)].push(v);
-                    }
-                    subs.into_iter().enumerate().for_each(|(rv, subs)| {
-                        if uf.root(rv) == rv && subs.len() > 1 {
-                            subs.into_iter().for_each(|v| {
-                                v_is_shown_at.insert(v, dict.len());
-                                dict.push(v);
-                            })
-                        }
-                    });
-                }
-                for v in 0..n {
-                    if !v_is_shown_at.contains_key(&v) {
-                        v_is_shown_at.insert(v, dict.len());
-                        dict.push(v);
-                    }
-                }
-                debug_assert!(v_is_shown_at.len() == n);
-                debug_assert!(dict.len() <= dict_len);
-                while dict.len() < dict_len {
-                    dict.push(0);
-                }
-                debug_assert!(dict.len() <= dict_len);
+            pub fn new(n: usize, dict: Vec<usize>) -> Self {
                 Self {
                     dict,
                     ans: vec![],
@@ -6112,6 +6082,13 @@ mod solver2 {
             );
             self.not_used.remove(&a);
             self.not_used.remove(&b);
+        }
+    }
+    fn sort2(a: usize, b: usize) -> (usize, usize) {
+        if (a, b) <= (b, a) {
+            (a, b)
+        } else {
+            (b, a)
         }
     }
     pub struct Solver {
@@ -6441,8 +6418,8 @@ mod solver2 {
             avs
         }
         pub fn solve(&self) {
-            let ufs = self.split_into_subsets();
-            let comm = Comm::new(self.n, self.dict_len, ufs);
+            let dict = self.split_into_subsets();
+            let comm = Comm::new(self.n, dict);
             let (inner, ag, bridge, lens) = self.build_root_graph(&comm);
             let adist = self.build_root_dist(&ag);
             let inner_path = self.build_inner_path(&inner);
@@ -6450,7 +6427,7 @@ mod solver2 {
             self.actual_motion(comm, tgt_avs, inner, ag, adist, bridge, inner_path, lens);
             // main
         }
-        fn split_into_subsets(&self) -> Vec<UnionFind> {
+        fn split_into_subsets(&self) -> Vec<usize> {
             let dist = (0..self.n)
                 .map(|ini| {
                     let mut dist = vec![INF; self.n];
@@ -6489,8 +6466,7 @@ mod solver2 {
                 }
                 ecnt
             };
-            let mut ufs = vec![UnionFind::new(self.n)];
-            let mut checker = UniteChecker::new(self.n, self.dict_len);
+            let mut uf = UnionFind::new(self.n);
             {
                 let mut que = BinaryHeap::new();
                 for ei in 0..self.m {
@@ -6498,57 +6474,184 @@ mod solver2 {
                 }
                 while let Some((_ecnt, ei)) = que.pop() {
                     let (a, b) = self.es[ei];
-                    if ufs.iter_mut().any(|uf| uf.same(a, b)) {
+                    if uf.same(a, b) {
                         continue;
                     }
-                    let mut con = false;
-                    for (y, uf) in ufs.iter_mut().enumerate() {
-                        if uf.group_size(a) + uf.group_size(b) > self.sig_len {
-                            continue;
-                        }
-                        if !checker.can_unite(y, a, b) {
-                            continue;
-                        }
-                        checker.unite(y, a, b);
-                        uf.unite(a, b);
-                        con = true;
-                        break;
+                    if uf.group_size(a) + uf.group_size(b) > self.sig_len {
+                        continue;
                     }
-                    if !con {
-                        if !checker.can_unite(ufs.len(), a, b) {
-                            continue;
-                        }
-                        checker.unite(ufs.len(), a, b);
-                        ufs.push(UnionFind::new(self.n));
-                        ufs.iter_mut().next_back().unwrap().unite(a, b);
-                    }
+                    uf.unite(a, b);
                 }
             }
-            /*
-            let mut vs = (0..self.n).collect::<Vec<_>>();
-            vs.sort_by(|&a, &b| {
-                let (x, y) = self.xy[a];
-                let da = (((x - 500).pow(2) + (y - 500).pow(2)) as f32).sqrt();
-                let (x, y) = self.xy[b];
-                let db = (((x - 500).pow(2) + (y - 500).pow(2)) as f32).sqrt();
-                da.partial_cmp(&db).unwrap()
-            });
-            for (oi, &ov) in vs.iter().enumerate() {
-                for &iv in vs.iter().take(oi) {
-                    if !self.g[ov].iter().any(|(nv, _)| nv == &iv) {
+            self.build_bridge_dict(dist, uf)
+        }
+        fn build_bridge_dict(&self, dist: Vec<Vec<usize>>, mut uf: UnionFind) -> Vec<usize> {
+            let rg = {
+                let mut rg = vec![Set::new(); self.n];
+                for &(a, b) in self.es.iter() {
+                    let ra = uf.root(a);
+                    let rb = uf.root(b);
+                    if ra == rb {
                         continue;
                     }
-                    if uf0.group_size(ov) + uf0.group_size(iv) > self.sig_len {
-                        continue;
-                    }
-                    uf0.unite(iv, ov);
+                    rg[ra].insert(rb);
+                    rg[rb].insert(ra);
                 }
+                rg.into_iter()
+                    .map(|rg| rg.into_iter().collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            };
+            let rdist = (0..self.n)
+                .map(|ini| {
+                    let mut dist = vec![INF; self.n];
+                    dist[ini] = 0;
+                    if ini != uf.root(ini) {
+                        return dist;
+                    }
+                    let mut que = VecDeque::new();
+                    que.push_back(ini);
+                    while let Some(rv0) = que.pop_front() {
+                        let d0 = dist[rv0];
+                        let d1 = d0 + 1;
+                        for &rv1 in rg[rv0].iter() {
+                            if dist[rv1].chmin(d1) {
+                                que.push_back(rv1);
+                            }
+                        }
+                    }
+                    dist
+                })
+                .collect::<Vec<_>>();
+            let rbridge = {
+                let mut subs = vec![vec![]; self.n];
+                for v in 0..self.n {
+                    subs[uf.root(v)].push(v);
+                }
+                let mut rbridge = vec![vec![vec![]; self.n]; self.n];
+                for rv0 in 0..self.n {
+                    if rv0 != uf.root(rv0) {
+                        continue;
+                    }
+                    for rv1 in 0..self.n {
+                        if rv1 != uf.root(rv1) {
+                            continue;
+                        }
+                        if rv0 >= rv1 {
+                            continue;
+                        }
+                        let mut min_dist = None;
+                        let mut b = (0, 0);
+                        for &v0 in subs[rv0].iter() {
+                            for &v1 in subs[rv1].iter() {
+                                let dist = dist[v0][v1];
+                                if dist - 1 > self.sig_len {
+                                    continue;
+                                }
+                                if min_dist.chmin(dist) {
+                                    b = (v0, v1);
+                                }
+                            }
+                        }
+                        let Some(min_dist) = min_dist else {
+                            continue;
+                        };
+                        let (v0, v1) = b;
+                        let mut v = v0;
+                        let mut tour01 = vec![v];
+                        while v != v1 {
+                            let mut nxt_v = 0;
+                            let mut nd = None;
+                            for &(nv, _) in self.g[v].iter() {
+                                if nd.chmin(dist[v1][nv]) {
+                                    nxt_v = nv;
+                                }
+                            }
+                            tour01.push(nxt_v);
+                            v = nxt_v;
+                        }
+                        debug_assert_eq!(tour01.len(), min_dist + 1);
+                        rbridge[rv0][rv1] = tour01
+                            .iter()
+                            .skip(1)
+                            .rev()
+                            .skip(1)
+                            .rev()
+                            .copied()
+                            .collect::<Vec<_>>();
+                        rbridge[rv1][rv0] =
+                            rbridge[rv0][rv1].iter().rev().copied().collect::<Vec<_>>();
+                    }
+                }
+                rbridge
+            };
+            let cnt = {
+                let mut cnt = Map::new();
+                let mut rv = uf.root(0);
+                let mut ecnt = vec![vec![0; self.n]; self.n];
+                for &tgt_v in self.tgts.iter() {
+                    let tgt_rv = uf.root(tgt_v);
+                    let mut tour = vec![rv];
+                    while rv != tgt_rv {
+                        let mut nd = None;
+                        let mut nxt_rv = INF;
+                        for &nrv in rg[rv].iter() {
+                            let (a, b) = sort2(rv, nrv);
+                            let d1 = (rdist[tgt_rv][nrv], Reverse(ecnt[a][b]));
+                            if nd.chmin(d1) {
+                                nxt_rv = nrv;
+                            }
+                        }
+                        let (a, b) = sort2(rv, nxt_rv);
+                        ecnt[a][b] += 1;
+                        tour.push(nxt_rv);
+                        rv = nxt_rv;
+                    }
+                    for (t0, &rv0) in tour.iter().enumerate() {
+                        for (t1, &rv1) in tour.iter().enumerate().skip(t0 + 3) {
+                            let dt = t1 - t0;
+                            debug_assert!(dt >= 3);
+                            if rbridge[rv0][rv1].is_empty() {
+                                continue;
+                            }
+                            *cnt.entry(sort2(rv0, rv1)).or_insert(0) += dt;
+                        }
+                    }
+                }
+                cnt
+            };
+            let mut dict = {
+                let mut dict = vec![];
+                let mut subs = vec![vec![]; self.n];
+                for v in 0..self.n {
+                    subs[uf.root(v)].push(v);
+                }
+                subs.into_iter()
+                    .filter(|sub| !sub.is_empty())
+                    .for_each(|sub| {
+                        for v in sub {
+                            dict.push(v);
+                        }
+                    });
+                let mut cnt = cnt
+                    .into_iter()
+                    .map(|((rv0, rv1), d)| (d as f64 / rbridge[rv0][rv1].len() as f64, (rv0, rv1)))
+                    .collect::<Vec<_>>();
+                cnt.sort_by(|(ev0, _), (ev1, _)| ev0.partial_cmp(&ev1).unwrap());
+                for (_, (rv0, rv1)) in cnt.into_iter().rev() {
+                    if dict.len() + rbridge[rv0][rv1].len() > self.dict_len {
+                        continue;
+                    }
+                    for &v in rbridge[rv0][rv1].iter() {
+                        dict.push(v);
+                    }
+                }
+                dict
+            };
+            while dict.len() < self.dict_len {
+                dict.push(0);
             }
-             */
-            debug_assert!(ufs
-                .iter_mut()
-                .all(|uf| (0..self.n).all(|v| uf.group_size(v) <= self.sig_len)));
-            ufs
+            debug_assert!((0..self.n).all(|v| dict.contains(&v)));
+            dict
         }
     }
 }
