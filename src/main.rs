@@ -6617,34 +6617,137 @@ mod solver2 {
                         }
                     }
                 }
-                cnt
-            };
-            let mut dict = {
-                let mut dict = vec![];
-                let mut subs = vec![vec![]; self.n];
-                for v in 0..self.n {
-                    subs[uf.root(v)].push(v);
-                }
-                subs.into_iter()
-                    .filter(|sub| !sub.is_empty())
-                    .for_each(|sub| {
-                        for v in sub {
-                            dict.push(v);
-                        }
-                    });
                 let mut cnt = cnt
                     .into_iter()
                     .map(|((rv0, rv1), d)| (d, (rv0, rv1)))
                     .collect::<Vec<_>>();
                 cnt.sort();
+                cnt
+            };
+            let mut dict = {
+                let mut dict = vec![];
+                let mut eff_len = self.n;
+                let mut bg = UnionFind::new(self.n);
+                let mut seen_bridge = Set::new();
+                let mut seen_br = Set::new();
                 for (_, (rv0, rv1)) in cnt.into_iter().rev() {
-                    if dict.len() + rbridge[rv0][rv1].len() > self.dict_len {
+                    if !seen_bridge.insert(rbridge[rv0][rv1].iter().copied().collect::<Set<_>>()) {
                         continue;
                     }
+                    let mut brs = Set::new();
+                    let mut ends = Set::new();
+                    let mut zero_cost = true;
                     for &v in rbridge[rv0][rv1].iter() {
-                        dict.push(v);
+                        let rv = uf.root(v);
+                        debug_assert!(rv != rv0);
+                        debug_assert!(rv != rv1);
+                        if bg.graph[rv].len() >= 2 {
+                            zero_cost = false;
+                            break;
+                        }
+                        if bg.graph[rv].len() == 1 {
+                            ends.insert(rv);
+                        } else {
+                            brs.insert(rv);
+                        }
+                    }
+                    let mut ends = ends.into_iter().collect::<Vec<_>>();
+                    if zero_cost
+                        && (ends.len() < 2 || (ends.len() == 2 && !bg.same(ends[0], ends[1])))
+                    {
+                        if !seen_br.insert(
+                            brs.iter()
+                                .copied()
+                                .chain(ends.iter().copied())
+                                .collect::<Set<_>>(),
+                        ) {
+                            continue;
+                        }
+                        // zero cost
+                        let mut nxt = vec![];
+                        if let Some(rv) = ends.pop() {
+                            nxt.push(rv);
+                        }
+                        for rv in brs {
+                            nxt.push(rv);
+                        }
+                        if let Some(rv) = ends.pop() {
+                            nxt.push(rv);
+                        }
+                        for i in 1..nxt.len() {
+                            let r0 = nxt[i - 1];
+                            let r1 = nxt[i];
+                            debug_assert_eq!(r0, uf.root(r0));
+                            debug_assert_eq!(r1, uf.root(r1));
+                            debug_assert_ne!(r0, r1);
+                            debug_assert!(!uf.same(r0, r1));
+                            debug_assert!(!bg.same(r0, r1));
+                            bg.unite(r0, r1);
+                        }
+                        continue;
+                    } else if eff_len + rbridge[rv0][rv1].len() <= self.dict_len {
+                        // finite cost
+                        for &v in rbridge[rv0][rv1].iter() {
+                            dict.push(v);
+                            eff_len += 1;
+                        }
                     }
                 }
+                debug_assert!(bg.graph.iter().all(|nvs| nvs.len() <= 2));
+                let subs = {
+                    let mut subs = vec![vec![]; self.n];
+                    for v in 0..self.n {
+                        subs[uf.root(v)].push(v);
+                    }
+                    subs
+                };
+                let mut vis = vec![false; self.n];
+                debug_assert!(dict.len() + self.n <= self.dict_len);
+                for rv in 0..self.n {
+                    if uf.root(rv) != rv {
+                        continue;
+                    }
+                    if vis[rv] {
+                        continue;
+                    }
+                    if bg.graph[rv].len() >= 2 {
+                        continue;
+                    }
+                    vis[rv] = true;
+                    for &v in subs[rv].iter() {
+                        dict.push(v);
+                    }
+                    if bg.graph[rv].len() == 1 {
+                        let mut now = rv;
+                        loop {
+                            for &nv in bg.graph[now].iter() {
+                                debug_assert_ne!(now, nv);
+                                if vis[nv] {
+                                    continue;
+                                }
+                                vis[nv] = true;
+                                for &v in subs[nv].iter() {
+                                    dict.push(v);
+                                }
+                                now = nv;
+                            }
+                            if bg.graph[now].len() == 1 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                #[cfg(debug_assertions)]
+                {
+                    for v in 0..self.n {
+                        debug_assert!(if uf.root(v) != v {
+                            bg.graph[v].is_empty()
+                        } else {
+                            vis[v]
+                        });
+                    }
+                }
+                debug_assert!(dict.len() <= self.dict_len);
                 dict
             };
             while dict.len() < self.dict_len {
