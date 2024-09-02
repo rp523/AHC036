@@ -6634,9 +6634,9 @@ mod solver2 {
                     });
                 let mut cnt = cnt
                     .into_iter()
-                    .map(|((rv0, rv1), d)| (d as f64 / rbridge[rv0][rv1].len() as f64, (rv0, rv1)))
+                    .map(|((rv0, rv1), d)| (d, (rv0, rv1)))
                     .collect::<Vec<_>>();
-                cnt.sort_by(|(ev0, _), (ev1, _)| ev0.partial_cmp(&ev1).unwrap());
+                cnt.sort();
                 for (_, (rv0, rv1)) in cnt.into_iter().rev() {
                     if dict.len() + rbridge[rv0][rv1].len() > self.dict_len {
                         continue;
