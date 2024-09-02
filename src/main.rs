@@ -5996,7 +5996,7 @@ mod solver2 {
                     now_v: 0,
                 }
             }
-            pub fn set_sig(&mut self, i0: usize, ln: usize) {
+            pub fn set_sig(&mut self, (i0, ln): (usize, usize)) {
                 debug_assert!(i0 != INF && ln != INF);
                 self.ans.push(format!("s {} {} 0", ln, i0));
                 self.score += 1;
@@ -6152,13 +6152,13 @@ mod solver2 {
             adist: Vec<Vec<usize>>,
             bridge: Vec<Vec<(usize, usize)>>,
             inner_path: Vec<Map<(usize, usize), Vec<usize>>>,
-            lens: Vec<usize>,
+            lens: Vec<(usize, usize)>,
         ) {
             // build graph
             // dp
             let mut now_av = tgt_avs.pop_front().unwrap();
             let mut now_v = 0;
-            comm.set_sig(now_av, lens[now_av]);
+            comm.set_sig(lens[now_av]);
             for (&tgt_v, tgt_av) in self.tgts.iter().zip(tgt_avs.into_iter()) {
                 // root to root
                 while now_av != tgt_av {
@@ -6185,7 +6185,7 @@ mod solver2 {
                         comm.motion(nv);
                     }
                     // transition to next root
-                    comm.set_sig(nxt_av, lens[nxt_av]);
+                    comm.set_sig(lens[nxt_av]);
                     if b0 != b1 {
                         comm.motion(b1);
                     }
@@ -6210,7 +6210,7 @@ mod solver2 {
             Vec<Set<usize>>,
             Vec<Vec<usize>>,
             Vec<Vec<(usize, usize)>>,
-            Vec<usize>,
+            Vec<(usize, usize)>,
         ) {
             let mut inner = vec![];
             let mut lens = vec![];
@@ -6234,9 +6234,9 @@ mod solver2 {
                         i1.chmax(i);
                         inner1.insert(v);
                     }
+                    inner.push(inner1.clone());
+                    lens.push((i0, i1 - i0 + 1));
                 }
-                inner.push(inner1);
-                lens.push(i1 - i0 + 1);
             }
             #[cfg(debug_assertions)]
             {
