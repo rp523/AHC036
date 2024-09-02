@@ -6234,9 +6234,9 @@ mod solver2 {
                         i1.chmax(i);
                         inner1.insert(v);
                     }
-                    inner.push(inner1.clone());
-                    lens.push((i0, i1 - i0 + 1));
                 }
+                inner.push(inner1.clone());
+                lens.push((i0, i1 - i0 + 1));
             }
             #[cfg(debug_assertions)]
             {
